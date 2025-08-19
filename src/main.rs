@@ -1,5 +1,5 @@
 use clap::Parser;
-use memmap2::MmapOptions;
+use memmap2::{Mmap, MmapOptions};
 use std::{
     fs::{File, metadata},
     io::{BufReader, Read},
@@ -67,8 +67,8 @@ impl Tokenizer {
     }
 }
 
-struct Transformer {
-    //    Config config; // the hyperparameters of the architecture (the blueprint)
+struct Transformer<'a> {
+    // config: ; // the hyperparameters of the architecture (the blueprint)
     //    TransformerWeights weights; // the weights of the model
     //    RunState state; // buffers for the "wave" of activations in the forward pass
     //    // some more state needed to properly clean up the memory mapping (sigh)
@@ -77,25 +77,25 @@ struct Transformer {
     //    ssize_t file_size; // size of the checkpoint file in bytes
 }
 
-struct TransformerWeights {
+struct TransformerWeights<'a> {
     /// token embedding table
-    token_embedding_table: &[f32], // (vocab_size, dim)
+    token_embedding_table: &'a [f32], // (vocab_size, dim)
     /// weights for rmsnorms
-    rms_att_weight: &[f32], // (layer, dim) rmsnorm weights
-    rms_ffn_weight: &[f32], // (layer, dim)
+    rms_att_weight: &'a [f32], // (layer, dim) rmsnorm weights
+    rms_ffn_weight: &'a [f32], // (layer, dim)
     /// weights for matmuls. note dim == n_heads * head_size
-    wq: &[f32], // (layer, dim, n_heads * head_size)
-    wk: &[f32],             // (layer, dim, n_kv_heads * head_size)
-    wv: &[f32],             // (layer, dim, n_kv_heads * head_size)
-    wo: &[f32],             // (layer, n_heads * head_size, dim)
+    wq: &'a [f32], // (layer, dim, n_heads * head_size)
+    wk: &'a [f32],             // (layer, dim, n_kv_heads * head_size)
+    wv: &'a [f32],             // (layer, dim, n_kv_heads * head_size)
+    wo: &'a [f32],             // (layer, n_heads * head_size, dim)
     /// weights for ffn
-    w1: &[f32], // (layer, hidden_dim, dim)
-    w2: &[f32],             // (layer, dim, hidden_dim)
-    w3: &[f32],             // (layer, hidden_dim, dim)
+    w1: &'a [f32], // (layer, hidden_dim, dim)
+    w2: &'a [f32],             // (layer, dim, hidden_dim)
+    w3: &'a [f32],             // (layer, hidden_dim, dim)
     /// final rmsnorm
-    rms_final_weight: &[f32], // (dim,)
+    rms_final_weight: &'a [f32], // (dim,)
     /// (optional) classifier weights for the logits, on the last layer
-    wcls: &[f32],
+    wcls: &'a [f32],
 }
 
 impl Transformer {
@@ -106,19 +106,20 @@ impl Transformer {
         Transformer {}
     }
 
-    fn read_checkpoint(checkpoint_path: &str) {
+    fn read_checkpoint(checkpoint_path: &str) -> (Config, TransformerWeights) {
+        let mut config: Config;
+        let shared_weights: bool;
         {
             let file = File::open(checkpoint_path).unwrap();
             let mut file = BufReader::new(file);
             // read in the config header
             let mut buf = [0u8; size_of::<Config>()];
-            let mut config: Config;
             file.read_exact(&mut buf).unwrap();
             unsafe {
                 config = std::mem::transmute(buf);
             }
             eprintln!("{config:?}");
-            let shared_weights = config.vocab_size > 0;
+            shared_weights = config.vocab_size > 0;
             config.vocab_size = config.vocab_size.abs();
         }
         let data: Mmap;
@@ -129,15 +130,21 @@ impl Transformer {
                 data = MmapOptions::new().map_copy_read_only(&file).unwrap(); // open in read only mode, equivalent of mmap PROT_READ, MAP_PRIVATE
             }
         }
-        let data_weights = &data[size_of::<Config>()..];
-        todo!("here");
-        memory_map_weights(p);
-        //-// memory_map_weights(weights, config, weights_ptr, shared_weights);
-        // TODO
+
+        let data: &[f32] = unsafe {
+            std::slice::from_raw_parts(data.as_ptr() as *const f32, data.len() / size_of::<f32>())
+        };
+
+        let data = &data[size_of::<Config>() / size_of::<f32>()..];
+        let transformer_weights = memory_map_weights(&config, data, shared_weights);
     }
 }
 
-fn memory_map_weights(p: &Config, ptr: &[f32], shared_weights: bool) -> TransformerWeights {
+fn memory_map_weights<'a>(
+    p: &Config,
+    ptr: &'a [f32],
+    shared_weights: bool,
+) -> TransformerWeights<'a> {
     let head_size = p.dim / p.n_heads;
     // make sure the multiplications below are done in 64bit to fit the parameter counts of 13B+ models
     let token_embedding_table = ptr; // (vocab_size, dim)
@@ -146,8 +153,6 @@ fn memory_map_weights(p: &Config, ptr: &[f32], shared_weights: bool) -> Transfor
     // weights for rmsnorms
     let rms_att_weight = ptr; // (layer, dim) rmsnorm weights
     let ptr: &[f32] = &ptr[(p.n_layers * p.dim) as usize..];
-    //  rms_att_weight: &[f32],  TODO?
-    //  rms_ffn_weight: &[f32], // (layer, dim)
 
     // weights for matmuls. note dim == n_heads * head_size
     let wq = ptr; // (layer, dim, n_heads * head_size)
@@ -187,7 +192,21 @@ fn memory_map_weights(p: &Config, ptr: &[f32], shared_weights: bool) -> Transfor
     } else {
         ptr
     };
-    todo!()
+
+    TransformerWeights {
+        token_embedding_table,
+        rms_att_weight,
+        rms_ffn_weight,
+        wq,
+        wk,
+        wv,
+        wo,
+        w1,
+        w2,
+        w3,
+        rms_final_weight,
+        wcls,
+    }
 }
 
 #[repr(C)]
