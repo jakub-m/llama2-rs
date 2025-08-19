@@ -68,8 +68,11 @@ impl Tokenizer {
 }
 
 struct Transformer<'a> {
-    // config: ; // the hyperparameters of the architecture (the blueprint)
-    //    TransformerWeights weights; // the weights of the model
+    /// the hyperparameters of the architecture (the blueprint)
+    config: Config,
+    /// the weights of the model
+    weights: TransformerWeights<'a>,
+    file: File,
     //    RunState state; // buffers for the "wave" of activations in the forward pass
     //    // some more state needed to properly clean up the memory mapping (sigh)
     //    int fd; // file descriptor for memory mapping
@@ -98,15 +101,20 @@ struct TransformerWeights<'a> {
     wcls: &'a [f32],
 }
 
-impl Transformer {
-    fn build(checkpoint_path: &str) -> Transformer {
-        //malloc_run_state(&t->state, &t->config); // TODO
-        Self::read_checkpoint(checkpoint_path);
+impl<'a> Transformer<'a> {
+    fn build(checkpoint_path: &str) -> Self {
+        // TODO HERE malloc
         //todo!("continue malloc...")
-        Transformer {}
+        //malloc_run_state(&t->state, &t->config);
+        let (config, checkpoint) = Self::read_checkpoint(checkpoint_path);
+        Transformer {
+            config,
+            weights: checkpoint.tw,
+            file: checkpoint.file,
+        }
     }
 
-    fn read_checkpoint(checkpoint_path: &str) -> (Config, TransformerWeights) {
+    fn read_checkpoint<'c>(checkpoint_path: &str) -> (Config, Checkpoint<'c>) {
         let mut config: Config;
         let shared_weights: bool;
         {
@@ -122,14 +130,12 @@ impl Transformer {
             shared_weights = config.vocab_size > 0;
             config.vocab_size = config.vocab_size.abs();
         }
-        let data: Mmap;
-        {
-            // memory map the Transformer weights into the data pointer
-            let file = File::open(checkpoint_path).unwrap();
-            unsafe {
-                data = MmapOptions::new().map_copy_read_only(&file).unwrap(); // open in read only mode, equivalent of mmap PROT_READ, MAP_PRIVATE
-            }
-        }
+
+        // memory map the Transformer weights into the data pointer
+        let file = File::open(checkpoint_path).unwrap();
+        let data = unsafe {
+            MmapOptions::new().map_copy_read_only(&file).unwrap() // open in read only mode, equivalent of mmap PROT_READ, MAP_PRIVATE
+        };
 
         let data: &[f32] = unsafe {
             std::slice::from_raw_parts(data.as_ptr() as *const f32, data.len() / size_of::<f32>())
@@ -137,7 +143,20 @@ impl Transformer {
 
         let data = &data[size_of::<Config>() / size_of::<f32>()..];
         let transformer_weights = memory_map_weights(&config, data, shared_weights);
+        (
+            config,
+            Checkpoint {
+                file,
+                tw: transformer_weights,
+            },
+        )
     }
+}
+
+/// A helper to return mmap-ed memory and the mmap-ed file.
+struct Checkpoint<'a> {
+    file: File,
+    tw: TransformerWeights<'a>,
 }
 
 fn memory_map_weights<'a>(
