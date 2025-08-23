@@ -72,7 +72,8 @@ struct Transformer<'a> {
     config: Config,
     /// the weights of the model
     weights: TransformerWeights<'a>,
-    //    RunState state; // buffers for the "wave" of activations in the forward pass
+    /// buffers for the "wave" of activations in the forward pass
+    state: RunState,
     //    // some more state needed to properly clean up the memory mapping (sigh)
     //    int fd; // file descriptor for memory mapping
     //    float* data; // memory mapped data pointer
@@ -105,12 +106,11 @@ struct TransformerWeights<'a> {
 impl<'a> Transformer<'a> {
     fn build(checkpoint_path: &str) -> Self {
         // void build_transformer(Transformer *t, char* checkpoint_path) {
-        // TODO HERE malloc
-        //todo!("continue malloc...")
-        //malloc_run_state(&t->state, &t->config); // NOTE this is missing yet.
         let (config, checkpoint) = Self::read_checkpoint(checkpoint_path);
+        let state = RunState::new(&config);
         Transformer {
             config,
+            state,
             weights: checkpoint.transformer_weights,
             file: checkpoint.file,
         }
@@ -125,10 +125,7 @@ impl<'a> Transformer<'a> {
             // read in the config header
             let mut buf = [0u8; size_of::<ConfigDeser>()];
             file.read_exact(&mut buf).unwrap();
-            let mut config_deser: ConfigDeser;
-            unsafe {
-                config_deser = std::mem::transmute(buf);
-            }
+            let config_deser: ConfigDeser = unsafe { std::mem::transmute(buf) };
             eprintln!("{config_deser:?}");
             shared_weights = config_deser.is_shared_weights();
             config = config_deser.into();
