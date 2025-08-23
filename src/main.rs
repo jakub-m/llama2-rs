@@ -72,12 +72,13 @@ struct Transformer<'a> {
     config: Config,
     /// the weights of the model
     weights: TransformerWeights<'a>,
-    file: File,
     //    RunState state; // buffers for the "wave" of activations in the forward pass
     //    // some more state needed to properly clean up the memory mapping (sigh)
     //    int fd; // file descriptor for memory mapping
     //    float* data; // memory mapped data pointer
     //    ssize_t file_size; // size of the checkpoint file in bytes
+    /// the mmap-ed file with weights.
+    file: File,
 }
 
 struct TransformerWeights<'a> {
@@ -103,32 +104,34 @@ struct TransformerWeights<'a> {
 
 impl<'a> Transformer<'a> {
     fn build(checkpoint_path: &str) -> Self {
+        // void build_transformer(Transformer *t, char* checkpoint_path) {
         // TODO HERE malloc
         //todo!("continue malloc...")
-        //malloc_run_state(&t->state, &t->config);
+        //malloc_run_state(&t->state, &t->config); // NOTE this is missing yet.
         let (config, checkpoint) = Self::read_checkpoint(checkpoint_path);
         Transformer {
             config,
-            weights: checkpoint.tw,
+            weights: checkpoint.transformer_weights,
             file: checkpoint.file,
         }
     }
 
     fn read_checkpoint<'c>(checkpoint_path: &str) -> (Config, Checkpoint<'c>) {
-        let mut config: Config;
+        let config: Config;
         let shared_weights: bool;
         {
             let file = File::open(checkpoint_path).unwrap();
             let mut file = BufReader::new(file);
             // read in the config header
-            let mut buf = [0u8; size_of::<Config>()];
+            let mut buf = [0u8; size_of::<ConfigDeser>()];
             file.read_exact(&mut buf).unwrap();
+            let mut config_deser: ConfigDeser;
             unsafe {
-                config = std::mem::transmute(buf);
+                config_deser = std::mem::transmute(buf);
             }
-            eprintln!("{config:?}");
-            shared_weights = config.vocab_size > 0;
-            config.vocab_size = config.vocab_size.abs();
+            eprintln!("{config_deser:?}");
+            shared_weights = config_deser.is_shared_weights();
+            config = config_deser.into();
         }
 
         // memory map the Transformer weights into the data pointer
@@ -141,22 +144,80 @@ impl<'a> Transformer<'a> {
             std::slice::from_raw_parts(data.as_ptr() as *const f32, data.len() / size_of::<f32>())
         };
 
-        let data = &data[size_of::<Config>() / size_of::<f32>()..];
+        let data = &data[size_of::<ConfigDeser>() / size_of::<f32>()..];
         let transformer_weights = memory_map_weights(&config, data, shared_weights);
         (
             config,
             Checkpoint {
                 file,
-                tw: transformer_weights,
+                transformer_weights,
             },
         )
+    }
+}
+
+/// current wave of activations
+struct RunState {
+    /// activation at current time stamp (dim,)
+    x: Vec<f32>, //float *x;
+    /// same, but inside a residual branch (dim,)
+    xb: Vec<f32>, // float *xb;
+    /// an additional buffer just for convenience (dim,)
+    xb2: Vec<f32>, //float *xb2;
+    /// buffer for hidden dimension in the ffn (hidden_dim,)
+    hb: Vec<f32>, //float *hb;
+    /// buffer for hidden dimension in the ffn (hidden_dim,)
+    hb2: Vec<f32>, //float *hb2;
+    /// query (dim,)
+    q: Vec<f32>, //float *q;
+    /// key (dim,)
+    // k: Vec<f32>, //float *k; // TODO add k and v to RunState::new()
+    /// value (dim,)
+    // v: Vec<f32>, //float *v;
+    /// buffer for scores/attention values (n_heads, seq_len)
+    att: Vec<f32>, //float *att;
+    /// output logits
+    logits: Vec<f32>, //float *logits;
+    /// kv cache (layer, seq_len, dim)
+    key_cache: Vec<f32>, //float* key_cache;
+    /// kv cache (layer, seq_len, dim)
+    value_cache: Vec<f32>, //float* value_cache;
+}
+impl RunState {
+    fn new(p: &Config) -> RunState {
+        // void malloc_run_state(RunState* s, Config* p) {
+        let kv_dim = (p.dim * p.n_kv_heads) / p.n_heads;
+        let x = vec![0_f32; p.dim]; //s->x = calloc(p->dim, sizeof(float));
+        let xb = vec![0_f32; p.dim]; //s->xb = calloc(p->dim, sizeof(float));
+        let xb2 = vec![0_f32; p.dim]; //s->xb2 = calloc(p->dim, sizeof(float));
+        let hb = vec![0_f32; p.hidden_dim];
+        let hb2 = vec![0_f32; p.hidden_dim]; //s->hb2 = calloc(p->hidden_dim, sizeof(float));
+        let q = vec![0_f32; p.dim]; //s->q = calloc(p->dim, sizeof(float));
+        let key_cache = vec![0_f32; p.n_layers * p.seq_len * kv_dim]; //s->key_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
+        let value_cache = vec![0_f32; p.n_layers * p.seq_len * kv_dim]; //s->value_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
+        let att = vec![0_f32; p.n_heads * p.seq_len]; //s->att = calloc(p->n_heads * p->seq_len, sizeof(float));
+        let logits = vec![0_f32; p.vocab_size]; //s->logits = calloc(p->vocab_size, sizeof(float));
+        RunState {
+            x,
+            xb,
+            xb2,
+            hb,
+            hb2,
+            q,
+            //k,
+            //v,
+            att,
+            logits,
+            key_cache,
+            value_cache,
+        }
     }
 }
 
 /// A helper to return mmap-ed memory and the mmap-ed file.
 struct Checkpoint<'a> {
     file: File,
-    tw: TransformerWeights<'a>,
+    transformer_weights: TransformerWeights<'a>,
 }
 
 fn memory_map_weights<'a>(
@@ -167,43 +228,43 @@ fn memory_map_weights<'a>(
     let head_size = p.dim / p.n_heads;
     // make sure the multiplications below are done in 64bit to fit the parameter counts of 13B+ models
     let token_embedding_table = ptr; // (vocab_size, dim)
-    let ptr: &[f32] = &ptr[(p.vocab_size * p.dim) as usize..];
+    let ptr: &[f32] = &ptr[(p.vocab_size * p.dim)..];
 
     // weights for rmsnorms
     let rms_att_weight = ptr; // (layer, dim) rmsnorm weights
-    let ptr: &[f32] = &ptr[(p.n_layers * p.dim) as usize..];
+    let ptr: &[f32] = &ptr[(p.n_layers * p.dim)..];
 
     // weights for matmuls. note dim == n_heads * head_size
     let wq = ptr; // (layer, dim, n_heads * head_size)
-    let ptr: &[f32] = &ptr[(p.n_layers * p.dim * (p.n_heads * head_size)) as usize..];
+    let ptr: &[f32] = &ptr[(p.n_layers * p.dim * (p.n_heads * head_size))..];
 
     let wk = ptr; // (layer, dim, n_kv_heads * head_size)
-    let ptr: &[f32] = &ptr[(p.n_layers * p.dim * (p.n_kv_heads * head_size)) as usize..];
+    let ptr: &[f32] = &ptr[(p.n_layers * p.dim * (p.n_kv_heads * head_size))..];
 
     let wv = ptr; //  (layer, dim, n_kv_heads * head_size)
-    let ptr: &[f32] = &ptr[(p.n_layers * p.dim * (p.n_kv_heads * head_size)) as usize..];
+    let ptr: &[f32] = &ptr[(p.n_layers * p.dim * (p.n_kv_heads * head_size))..];
 
     let wo = ptr; // (layer, n_heads * head_size, dim)
-    let ptr: &[f32] = &ptr[(p.n_layers * (p.n_heads * head_size) * p.dim) as usize..];
+    let ptr: &[f32] = &ptr[(p.n_layers * (p.n_heads * head_size) * p.dim)..];
 
     let rms_ffn_weight = ptr;
-    let ptr: &[f32] = &ptr[(p.n_layers * p.dim) as usize..];
+    let ptr: &[f32] = &ptr[(p.n_layers * p.dim)..];
 
     // weights for ffn
     let w1 = ptr; // (layer, hidden_dim, dim)
-    let ptr: &[f32] = &ptr[(p.n_layers * p.dim * p.hidden_dim) as usize..];
+    let ptr: &[f32] = &ptr[(p.n_layers * p.dim * p.hidden_dim)..];
 
     let w2 = ptr; // (layer, dim, hidden_dim);
-    let ptr: &[f32] = &ptr[(p.n_layers * p.hidden_dim * p.dim) as usize..];
+    let ptr: &[f32] = &ptr[(p.n_layers * p.hidden_dim * p.dim)..];
 
     let w3 = ptr; // (layer, hidden_dim, dim)
-    let ptr: &[f32] = &ptr[(p.n_layers * p.dim * p.hidden_dim) as usize..];
+    let ptr: &[f32] = &ptr[(p.n_layers * p.dim * p.hidden_dim)..];
 
     // final rmsnorm
     let rms_final_weight = ptr; // (dim,)
-    let ptr: &[f32] = &ptr[(p.dim) as usize..];
-    let ptr: &[f32] = &ptr[(p.seq_len * head_size / 2) as usize..]; // skip what used to be freq_cis_real (for RoPE)
-    let ptr: &[f32] = &ptr[(p.seq_len * head_size / 2) as usize..]; // skip what used to be freq_cis_imag (for RoPE)
+    let ptr: &[f32] = &ptr[(p.dim)..];
+    let ptr: &[f32] = &ptr[(p.seq_len * head_size / 2)..]; // skip what used to be freq_cis_real (for RoPE)
+    let ptr: &[f32] = &ptr[(p.seq_len * head_size / 2)..]; // skip what used to be freq_cis_imag (for RoPE)
 
     // (optional) classifier weights for the logits, on the last layer
     let wcls: &[f32] = if shared_weights {
@@ -228,9 +289,10 @@ fn memory_map_weights<'a>(
     }
 }
 
+/// Definition of Config for deserialization (with i32)
 #[repr(C)]
 #[derive(Debug)]
-struct Config {
+struct ConfigDeser {
     /// transformer dimension
     dim: i32,
     /// for ffn layers
@@ -245,6 +307,53 @@ struct Config {
     vocab_size: i32,
     /// max sequence length
     seq_len: i32,
+}
+
+impl ConfigDeser {
+    fn is_shared_weights(&self) -> bool {
+        self.vocab_size > 0
+    }
+}
+
+#[derive(Debug)]
+struct Config {
+    /// transformer dimension
+    dim: usize,
+    /// for ffn layers
+    hidden_dim: usize,
+    /// number of layers
+    n_layers: usize,
+    /// number of query heads
+    n_heads: usize,
+    /// number of key/value heads (can be < query heads because of multiquery)
+    n_kv_heads: usize,
+    /// vocabulary size, usually 256 (byte-level)
+    vocab_size: usize,
+    /// max sequence length
+    seq_len: usize,
+}
+
+impl From<ConfigDeser> for Config {
+    fn from(c: ConfigDeser) -> Self {
+        let ConfigDeser {
+            dim,
+            hidden_dim,
+            n_layers,
+            n_heads,
+            n_kv_heads,
+            vocab_size,
+            seq_len,
+        } = c;
+        Config {
+            dim: dim as usize,
+            hidden_dim: hidden_dim as usize,
+            n_layers: n_layers as usize,
+            n_heads: n_heads as usize,
+            n_kv_heads: n_kv_heads as usize,
+            vocab_size: vocab_size.abs() as usize,
+            seq_len: seq_len as usize,
+        }
+    }
 }
 
 fn main() {
