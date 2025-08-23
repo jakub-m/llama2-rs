@@ -286,6 +286,38 @@ fn memory_map_weights<'a>(
     }
 }
 
+/// The Sampler, which takes logits and returns a sampled token
+/// sampling can be done in a few ways: greedy argmax, sampling, top-p sampling
+struct Sampler {
+    vocab_size: usize,
+    /// buffer used in top-p sampling
+    probindex: Vec<ProbIndex>,
+    temperature: f32,
+    topp: f32,
+    rng_state: usize, //    unsigned long long rng_state;
+}
+
+/// struct used when sorting probabilities during top-p sampling
+#[derive(Clone, Default)]
+struct ProbIndex {
+    prob: f32,
+    index: usize,
+}
+
+impl Sampler {
+    fn new(vocab_size: usize, temperature: f32, topp: f32, rng_seed: usize) -> Self {
+        // void build_sampler(Sampler* sampler, int vocab_size, float temperature, float topp, unsigned long long rng_seed)
+        Sampler {
+            vocab_size,
+            temperature,
+            topp,
+            rng_state: rng_seed,
+            // buffer only used with nucleus sampling; may not need but it's ~small
+            probindex: vec![ProbIndex::default(); vocab_size],
+        }
+    }
+}
+
 /// Definition of Config for deserialization (with i32)
 #[repr(C)]
 #[derive(Debug)]
