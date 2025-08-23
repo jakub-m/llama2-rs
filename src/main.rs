@@ -3,6 +3,7 @@ use memmap2::{Mmap, MmapOptions};
 use std::{
     fs::{File, metadata},
     io::{BufReader, Read},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 struct TokenIndex<'a> {
@@ -294,7 +295,7 @@ struct Sampler {
     probindex: Vec<ProbIndex>,
     temperature: f32,
     topp: f32,
-    rng_state: usize, //    unsigned long long rng_state;
+    rng_state: u128,
 }
 
 /// struct used when sorting probabilities during top-p sampling
@@ -305,7 +306,7 @@ struct ProbIndex {
 }
 
 impl Sampler {
-    fn new(vocab_size: usize, temperature: f32, topp: f32, rng_seed: usize) -> Self {
+    fn new(vocab_size: usize, temperature: f32, topp: f32, rng_seed: u128) -> Self {
         // void build_sampler(Sampler* sampler, int vocab_size, float temperature, float topp, unsigned long long rng_seed)
         Sampler {
             vocab_size,
@@ -385,18 +386,61 @@ impl From<ConfigDeser> for Config {
     }
 }
 
+fn generate(
+    transformer: &Transformer,
+    tokenizer: &Tokenizer,
+    sampler: &Sampler,
+    prompt: String,
+    steps: usize,
+) {
+    todo!("HERE")
+}
+
 fn main() {
     let args = Args::parse();
-    println!("Hello, world! {args:?}");
+    assert!(args.temperature >= 0.0 && args.temperature <= 1.0);
+    assert!(args.topp >= 0.0 && args.topp <= 1.0);
+    eprintln!("{args:?}");
 
-    Transformer::build(&args.checkpoint_path);
-    // TODO missing stuff from run.c
-    Tokenizer::build(&args.tokenizer_path, 32000);
+    let transformer = Transformer::build(&args.checkpoint_path);
+    assert!(args.steps <= transformer.config.seq_len);
+    let tokenizer = Tokenizer::build(&args.tokenizer_path, transformer.config.vocab_size);
+    let sampler = Sampler::new(
+        transformer.config.vocab_size,
+        args.temperature,
+        args.topp,
+        args.rng_seed,
+    );
+
+    generate(&transformer, &tokenizer, &sampler, args.prompt, args.steps);
 }
 
 #[derive(Parser, Debug)]
 struct Args {
     #[arg(short = 'z')]
     tokenizer_path: String,
+    /// 0.0 = greedy deterministic. 1.0 = original. don't set higher
+    #[arg(short = 't', default_value_t = 1.0)]
+    temperature: f32,
+    /// top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
+    #[arg(short = 'p', default_value_t = 0.9)]
+    topp: f32,
+    /// number of steps to run for
+    #[arg(short = 'n', default_value_t = 256)]
+    steps: usize,
+    /// prompt string
+    #[arg(short = 'i', default_value = "")]
+    prompt: String,
+    /// seed rng with time by default
+    #[arg(short='s', default_value_t=default_seed())]
+    rng_seed: u128,
+
     checkpoint_path: String,
+}
+
+fn default_seed() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
 }
