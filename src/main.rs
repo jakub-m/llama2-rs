@@ -137,16 +137,19 @@ impl Tokenizer {
 
     /// encode the string text (input) into an upper-bound preallocated tokens[] array
     /// bos != 0 means prepend the BOS token (=1), eos != 0 means append the EOS token (=2)
-    fn encode(&self, text: &str, bos_eos: BosEos) {
+    fn encode(&self, text: &str, add_bos: AddBos, add_eos: AddEos) -> Vec<usize> {
         // void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *n_tokens)
 
         // First, encode codepoint by codepoint, later merge succesive encoded tokens using the "best"
         // match.
-
         let mut tokens: Vec<usize> = Vec::with_capacity(text.len() + 3); // max. possible capacity, +3 for '\0', ?BOS, ?EOS
 
-        if let BosEos::BOS = bos_eos {
+        if let AddBos::Yes = add_bos {
             tokens.push(TOK_BOS)
+        }
+
+        if let AddEos::Yes = add_eos {
+            tokens.push(TOK_EOS)
         }
 
         // Original comment:
@@ -246,52 +249,36 @@ impl Tokenizer {
             }
         }
 
-        deprintln!("encoded tokens:\n---");
-        for tok_id in &tokens {
-            let s = self.vocab.get(*tok_id).unwrap();
-            deprint!("{s}");
-        }
-        deprintln!("---");
-
-        todo!("what after the loop ends");
-
-        // TODO return tokens, return n_tokens
-        /*
-        while (1) {
-            float best_score = -1e10;
-            int best_id = -1;
-            int best_idx = -1;
-
-            for (int i=0; i < (*n_tokens-1); i++) {
-                // check if we can merge the pair (tokens[i], tokens[i+1])
-                sprintf(str_buffer, "%s%s", t->vocab[tokens[i]], t->vocab[tokens[i+1]]);
-                int id = str_lookup(str_buffer, t->sorted_vocab, t->vocab_size);
-                if (id != -1 && t->vocab_scores[id] > best_score) {
-                    // this merge pair exists in vocab! record its score and position
-                    best_score = t->vocab_scores[id];
-                    best_id = id;
-                    best_idx = i;
-                }
+        // Compare the decoded text and check if it is the same as the original.
+        #[cfg(feature = "debug")]
+        {
+            let mut decoded = String::new();
+            let mut original = String::new();
+            if let AddBos::Yes = add_bos {
+                original.push_str("\n<s>\n")
             }
-
-            if (best_idx == -1) {
-                break; // we couldn't find any more pairs to merge, so we're done
+            if !text.is_empty() {
+                original.push_str(" ");
             }
-
-            // merge the consecutive pair (best_idx, best_idx+1) into new token best_id
-            tokens[best_idx] = best_id;
-            // delete token at position best_idx+1, shift the entire sequence back 1
-            for (int i = best_idx+1; i < (*n_tokens-1); i++) {
-                tokens[i] = tokens[i+1];
+            original.push_str(text);
+            if let AddEos::Yes = add_eos {
+                original.push_str("\n</s>\n")
             }
-            (*n_tokens)--; // token length decreased
+            deprint!("|");
+            for tok_id in &tokens {
+                let s = self.vocab.get(*tok_id).unwrap();
+                decoded.push_str(s.as_str());
+                deprint!("{}|", s);
+            }
+            deprintln!("");
+            assert_eq!(
+                &decoded, &original,
+                "decoded (left) and original (right) text do not match"
+            );
+            deprintln!("decoded and original match");
         }
 
-        // add optional EOS (=2) token, if desired
-        if (eos) tokens[(*n_tokens)++] = 2;
-
-        free(str_buffer);
-         */
+        tokens
     }
 
     /// find the perfect match for str in vocab
@@ -638,7 +625,7 @@ fn generate(
     //    fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
     //    exit(EXIT_FAILURE);
     //}
-    tokenizer.encode(&prompt, BosEos::BOS);
+    tokenizer.encode(&prompt, AddBos::Yes, AddEos::No);
     todo!("HERE")
     /*
 
@@ -684,14 +671,18 @@ fn generate(
      */
 }
 
+/// Should mark beginnig of string.
 #[derive(Debug)]
-enum BosEos {
-    /// Beginning of string
-    BOS,
-    /// Neither BOS nor EOS
-    MID,
-    /// End of string
-    EOS,
+enum AddBos {
+    No,
+    Yes,
+}
+
+/// Should mark end of string.
+#[derive(Debug)]
+enum AddEos {
+    No,
+    Yes,
 }
 
 fn main() {
@@ -741,4 +732,26 @@ fn default_seed() -> u128 {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{AddBos, Tokenizer};
+    use std::sync::{LazyLock, Mutex};
+
+    // TOKENIZER tries to share the Tokenizer across test cases.
+    thread_local! { // Tokenizer is not Sync, works with thread_local.
+        static TOKENIZER: LazyLock<Mutex<Tokenizer>> =
+            LazyLock::new(|| Mutex::new(Tokenizer::build("tokenizer.bin", 32000)));
+    }
+
+    #[test]
+    fn test_tokenizer_string_0() {
+        TOKENIZER.with(|tokenizer| {
+            let tokenizer = tokenizer.lock().unwrap();
+            let actual = tokenizer.encode("", AddBos::Yes, crate::AddEos::No);
+            let expected: Vec<usize> = vec![1];
+            assert_eq!(actual, expected);
+        });
+    }
 }
