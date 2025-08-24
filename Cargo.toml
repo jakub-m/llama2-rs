@@ -8,5 +8,11 @@ clap = { version = "4.5.45", features = ["derive"] }
 memmap2 = "0.9.7"
 
 [features]
-default = []
+default = ["debug"]
 debug = []
+
+# [profile.dev]
+# features = ["debug"]
+# 
+# [profile.release]
+# features = []

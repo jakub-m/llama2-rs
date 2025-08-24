@@ -7,17 +7,39 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(feature = "debug")]
 #[macro_export]
 macro_rules! deprintln {
     ($($arg:tt)*) => {
-        #[cfg(feature = "debug")]
         {
             eprintln!($($arg)*);
         }
-        #[cfg(not(feature = "debug"))]
+    };
+}
+
+#[cfg(feature = "debug")]
+#[macro_export]
+macro_rules! deprint {
+    ($($arg:tt)*) => {
         {
-            // no-op
+            eprint!($($arg)*);
         }
+    };
+}
+
+#[cfg(not(feature = "debug"))]
+#[macro_export]
+macro_rules! deprintln {
+    ($($arg:tt)*) => {
+        /* nop */
+    };
+}
+
+#[cfg(not(feature = "debug"))]
+#[macro_export]
+macro_rules! deprint {
+    ($($arg:tt)*) => {
+        /* nop */
     };
 }
 
@@ -159,63 +181,78 @@ impl Tokenizer {
 
         // let mut tokens_iter = tokens.into_iter();
         loop {
-            let mut curr_str_score: Option<(String, f32)> = None;
+            let mut curr_str_id_score: Option<(String, usize, f32)> = None;
             // new_tokens holds the tokens after this iteration, that will became the input tokens
             // to the next iteration.
-            let mut new_tokens: Vec<String> = Vec::with_capacity(tokens.len());
+            let mut new_tokens: Vec<usize> = Vec::with_capacity(tokens.len());
             for next_tok_id in &tokens {
                 let next_tok_id = *next_tok_id;
                 let next_tok_str = self.vocab.get(next_tok_id).unwrap().as_str();
-                if let Some((ref curr_str, best_score)) = curr_str_score {
+                if let Some((ref curr_str, curr_id, best_score)) = curr_str_id_score {
                     let candidate_str = format!("{}{}", curr_str, next_tok_str);
                     if let Some(candidate_token_index) = self.str_lookup(&candidate_str) {
                         let candidate_score =
                             *(self.vocab_scores.get(candidate_token_index.id).unwrap());
                         if candidate_score > best_score {
                             // The candidate is just better so keep it.
-                            curr_str_score = Some((candidate_str, candidate_score));
+                            curr_str_id_score =
+                                Some((candidate_str, candidate_token_index.id, candidate_score));
                         } else {
                             // The candidate merged from "curr" and "next" is not better than the current one, so use the current,
                             // reset the state, and continue.
-                            new_tokens.push(curr_str.clone());
-                            curr_str_score = Some((
+                            new_tokens.push(curr_id);
+                            curr_str_id_score = Some((
                                 next_tok_str.to_string(),
+                                next_tok_id,
                                 *(self.vocab_scores.get(next_tok_id).unwrap()),
                             ));
                         }
                     } else {
                         // A "merged" token not found in vocab, so just use whatever we have
                         // already and carry on.
-                        new_tokens.push(curr_str.clone());
-                        curr_str_score = Some((
+                        new_tokens.push(curr_id);
+                        curr_str_id_score = Some((
                             next_tok_str.to_string(),
+                            next_tok_id,
                             *(self.vocab_scores.get(next_tok_id).unwrap()),
                         ));
                     }
                 } else {
                     // The state is empty, so use the "next" token.
-                    curr_str_score = Some((
+                    curr_str_id_score = Some((
                         next_tok_str.to_string(),
+                        next_tok_id,
                         *(self.vocab_scores.get(next_tok_id).unwrap()),
                     ));
                 }
             }
-            if let Some((curr_str, _)) = curr_str_score {
-                new_tokens.push(curr_str);
+            if let Some((_, curr_id, _)) = curr_str_id_score {
+                new_tokens.push(curr_id);
             }
             // TODO Add some assertion that checks if the string decodes correctly
             assert!(new_tokens.len() <= tokens.len(), "encoding erorr");
             if new_tokens.len() < tokens.len() {
                 // The new tokens list is shorter, i.e. "better", use it in another iteration.
+                deprintln!("encode improved: {} < {}", new_tokens.len(), tokens.len());
                 tokens = new_tokens;
-            } else if (new_tokens.len() == tokens.len()) {
+            } else if new_tokens.len() == tokens.len() {
                 // No progress, quit merging.
+                deprintln!("encode stop: {}={}", new_tokens.len(), tokens.len());
+                tokens = new_tokens;
                 break;
             } else {
                 assert!(new_tokens.len() <= tokens.len(), "encoding erorr");
                 unreachable!();
             }
         }
+
+        deprintln!("encoded tokens:\n---");
+        for tok_id in &tokens {
+            let s = self.vocab.get(*tok_id).unwrap();
+            deprint!("{s}");
+        }
+        deprintln!("---");
+
         todo!("what after the loop ends");
 
         // TODO return tokens, return n_tokens
