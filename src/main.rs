@@ -762,8 +762,26 @@ mod tests {
         TOKENIZER.with(|tokenizer| {
             let tokenizer = tokenizer.lock().unwrap();
             let actual = tokenizer.encode(text, AddBos::Yes, crate::AddEos::No);
-            assert_eq!(actual, expected_tokens);
+            assert_eq!(
+                actual,
+                expected_tokens,
+                "actual tokenization:\n{}\n\nexpected tokenization: \n{}",
+                debug_tokenization(&tokenizer, &actual),
+                debug_tokenization(&tokenizer, &expected_tokens),
+            );
         });
+    }
+
+    fn debug_tokenization(tokenizer: &Tokenizer, token_ids: &Vec<usize>) -> String {
+        let mut out = String::new();
+        for (i, tok_id) in token_ids.iter().enumerate() {
+            let tok_id = *tok_id;
+            let vocab = tokenizer.vocab.get(tok_id).unwrap();
+            let vocab_score = tokenizer.vocab_scores.get(tok_id).unwrap();
+            let s = format!("{i}\t{vocab:?}\t{vocab_score}\n");
+            out.push_str(&s);
+        }
+        out
     }
 
     //// test 2
