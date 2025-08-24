@@ -6,3 +6,7 @@ edition = "2024"
 [dependencies]
 clap = { version = "4.5.45", features = ["derive"] }
 memmap2 = "0.9.7"
+
+[features]
+default = []
+debug = []

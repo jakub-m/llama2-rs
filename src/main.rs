@@ -7,6 +7,20 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[macro_export]
+macro_rules! deprintln {
+    ($($arg:tt)*) => {
+        #[cfg(feature = "debug")]
+        {
+            eprintln!($($arg)*);
+        }
+        #[cfg(not(feature = "debug"))]
+        {
+            // no-op
+        }
+    };
+}
+
 #[derive(Clone)]
 struct TokenIndex {
     token_str: Rc<String>,
@@ -33,7 +47,6 @@ impl Tokenizer {
     fn build(path: &str, vocab_size: usize) -> Tokenizer {
         let byte_pieces: [Box<String>; 256] =
             std::array::from_fn(|i| Box::new((i as u8 as char).to_string()));
-        //dbg!(&byte_pieces);
         let mut vocab: Vec<Rc<String>> = (0..vocab_size).map(|_| Rc::new("".to_string())).collect();
         let mut vocab_scores = vec![0f32; vocab_size];
         let file = File::open(path).unwrap();
@@ -42,26 +55,21 @@ impl Tokenizer {
         let mut buf = [0u8; 4];
         reader.read_exact(&mut buf).unwrap();
         let max_token_length = i32::from_le_bytes(buf) as usize;
-        //dbg!(max_token_length);
 
         for i in 0..vocab_size {
             let mut buf = [0u8; 4];
             reader.read_exact(&mut buf).unwrap();
             let score = f32::from_le_bytes(buf);
-            //dbg!(i, score);
             vocab_scores[i] = score;
 
             let mut buf = [0u8; 4];
             reader.read_exact(&mut buf).unwrap();
             let len: i32 = i32::from_le_bytes(buf);
-            //dbg!(i, &len);
 
             let mut buf: Vec<u8> = vec![0u8; len as usize];
             reader.read_exact(&mut buf).unwrap();
             let s = String::from_utf8(buf).unwrap();
-            // dbg!(i, score, &len, &s);
-            // dbg!(score);
-            // eprintln!("{i}: score={score} len={len} s={s:?}");
+            deprintln!("{i}: score={score} len={len} s={s:?}");
             vocab[i] = Rc::new(s);
         }
 
@@ -90,7 +98,7 @@ impl Tokenizer {
         sorted_vocab.sort_by(|a, b| a.token_str.partial_cmp(&b.token_str).unwrap());
 
         for s in &sorted_vocab {
-            eprintln!("sorted_vocab {}, {}", s.token_str, s.id)
+            deprintln!("sorted_vocab {}, {}", s.token_str, s.id);
         }
 
         Tokenizer {
@@ -173,7 +181,7 @@ impl<'a> Transformer<'a> {
             let mut buf = [0u8; size_of::<ConfigDeser>()];
             file.read_exact(&mut buf).unwrap();
             let config_deser: ConfigDeser = unsafe { std::mem::transmute(buf) };
-            eprintln!("{config_deser:?}");
+            deprintln!("{config_deser:?}");
             shared_weights = config_deser.is_shared_weights();
             config = config_deser.into();
         }
@@ -535,7 +543,7 @@ fn encode(t: &Tokenizer, text: &str, bos_eos: BosEos) {
                 .str_lookup(&s)
                 .expect("Expected to find the single-character token. Fallback missing.");
             tokens.push(tok.id);
-            eprintln!("encode {} {}", tok.token_str, tok.id);
+            deprintln!("encode {} {}", tok.token_str, tok.id);
             //The original code had fallback that I skip here.
             //  // byte_fallback encoding: just encode each byte as a token
             //  // +3 is here because the first 3 vocab elements are <unk>, <s>, </s>
@@ -590,7 +598,7 @@ fn main() {
     let args = Args::parse();
     assert!(args.temperature >= 0.0 && args.temperature <= 1.0);
     assert!(args.topp >= 0.0 && args.topp <= 1.0);
-    eprintln!("{args:?}");
+    deprintln!("{args:?}");
 
     let transformer = Transformer::build(&args.checkpoint_path);
     assert!(args.steps <= transformer.config.seq_len);
