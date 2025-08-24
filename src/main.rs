@@ -23,7 +23,9 @@ macro_rules! deprintln {
 
 #[derive(Clone)]
 struct TokenIndex {
+    /// Refernce to string in [Tokenizer::vocab] vector.
     token_str: Rc<String>,
+    /// position in [Tokenizer::vocab] vector.
     id: usize,
 }
 
@@ -109,6 +111,150 @@ impl Tokenizer {
             byte_pieces,
             max_token_length,
         }
+    }
+
+    /// encode the string text (input) into an upper-bound preallocated tokens[] array
+    /// bos != 0 means prepend the BOS token (=1), eos != 0 means append the EOS token (=2)
+    fn encode(&self, text: &str, bos_eos: BosEos) {
+        // void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *n_tokens)
+
+        // First, encode codepoint by codepoint, later merge succesive encoded tokens using the "best"
+        // match.
+
+        let mut tokens: Vec<usize> = Vec::with_capacity(text.len() + 3); // max. possible capacity, +3 for '\0', ?BOS, ?EOS
+
+        if let BosEos::BOS = bos_eos {
+            tokens.push(TOK_BOS)
+        }
+
+        // Original comment:
+        //   add_dummy_prefix is true by default
+        //   so prepend a dummy prefix token to the input string, but only if text != ""
+        //   pretty sure this isn't correct in the general case but I don't have the
+        //   energy to read more of the sentencepiece code to figure out what it's doing
+        if !text.is_empty() {
+            let dummy_prefix = self.str_lookup(" ").expect("could not find \" \"");
+            tokens.push(dummy_prefix.id);
+        }
+        {
+            // Decode codepoint by codepoint.
+            let mut tmp = [0u8; 4];
+            for c in text.chars() {
+                let s = c.encode_utf8(&mut tmp);
+                let tok = self
+                    .str_lookup(&s)
+                    .expect("Expected to find the single-character token. Fallback missing.");
+                tokens.push(tok.id);
+                deprintln!("encode {} {}", tok.token_str, tok.id);
+                //The original code had fallback that I skip here.
+                //  // byte_fallback encoding: just encode each byte as a token
+                //  // +3 is here because the first 3 vocab elements are <unk>, <s>, </s>
+                //  // so the individual bytes only start at index 3
+                //  for (int i=0; i < str_len; i++) {
+                //      tokens[(*n_tokens)++] = (unsigned char)str_buffer[i] + 3;
+            }
+        }
+
+        // merge the best consecutive pair each iteration, according the scores in vocab_scores
+
+        // let mut tokens_iter = tokens.into_iter();
+        loop {
+            let mut curr_str_score: Option<(String, f32)> = None;
+            // new_tokens holds the tokens after this iteration, that will became the input tokens
+            // to the next iteration.
+            let mut new_tokens: Vec<String> = Vec::with_capacity(tokens.len());
+            for next_tok_id in &tokens {
+                let next_tok_id = *next_tok_id;
+                let next_tok_str = self.vocab.get(next_tok_id).unwrap().as_str();
+                if let Some((ref curr_str, best_score)) = curr_str_score {
+                    let candidate_str = format!("{}{}", curr_str, next_tok_str);
+                    if let Some(candidate_token_index) = self.str_lookup(&candidate_str) {
+                        let candidate_score =
+                            *(self.vocab_scores.get(candidate_token_index.id).unwrap());
+                        if candidate_score > best_score {
+                            // The candidate is just better so keep it.
+                            curr_str_score = Some((candidate_str, candidate_score));
+                        } else {
+                            // The candidate merged from "curr" and "next" is not better than the current one, so use the current,
+                            // reset the state, and continue.
+                            new_tokens.push(curr_str.clone());
+                            curr_str_score = Some((
+                                next_tok_str.to_string(),
+                                *(self.vocab_scores.get(next_tok_id).unwrap()),
+                            ));
+                        }
+                    } else {
+                        // A "merged" token not found in vocab, so just use whatever we have
+                        // already and carry on.
+                        new_tokens.push(curr_str.clone());
+                        curr_str_score = Some((
+                            next_tok_str.to_string(),
+                            *(self.vocab_scores.get(next_tok_id).unwrap()),
+                        ));
+                    }
+                } else {
+                    // The state is empty, so use the "next" token.
+                    curr_str_score = Some((
+                        next_tok_str.to_string(),
+                        *(self.vocab_scores.get(next_tok_id).unwrap()),
+                    ));
+                }
+            }
+            if let Some((curr_str, _)) = curr_str_score {
+                new_tokens.push(curr_str);
+            }
+            // TODO Add some assertion that checks if the string decodes correctly
+            assert!(new_tokens.len() <= tokens.len(), "encoding erorr");
+            if new_tokens.len() < tokens.len() {
+                // The new tokens list is shorter, i.e. "better", use it in another iteration.
+                tokens = new_tokens;
+            } else if (new_tokens.len() == tokens.len()) {
+                // No progress, quit merging.
+                break;
+            } else {
+                assert!(new_tokens.len() <= tokens.len(), "encoding erorr");
+                unreachable!();
+            }
+        }
+        todo!("what after the loop ends");
+
+        // TODO return tokens, return n_tokens
+        /*
+        while (1) {
+            float best_score = -1e10;
+            int best_id = -1;
+            int best_idx = -1;
+
+            for (int i=0; i < (*n_tokens-1); i++) {
+                // check if we can merge the pair (tokens[i], tokens[i+1])
+                sprintf(str_buffer, "%s%s", t->vocab[tokens[i]], t->vocab[tokens[i+1]]);
+                int id = str_lookup(str_buffer, t->sorted_vocab, t->vocab_size);
+                if (id != -1 && t->vocab_scores[id] > best_score) {
+                    // this merge pair exists in vocab! record its score and position
+                    best_score = t->vocab_scores[id];
+                    best_id = id;
+                    best_idx = i;
+                }
+            }
+
+            if (best_idx == -1) {
+                break; // we couldn't find any more pairs to merge, so we're done
+            }
+
+            // merge the consecutive pair (best_idx, best_idx+1) into new token best_id
+            tokens[best_idx] = best_id;
+            // delete token at position best_idx+1, shift the entire sequence back 1
+            for (int i = best_idx+1; i < (*n_tokens-1); i++) {
+                tokens[i] = tokens[i+1];
+            }
+            (*n_tokens)--; // token length decreased
+        }
+
+        // add optional EOS (=2) token, if desired
+        if (eos) tokens[(*n_tokens)++] = 2;
+
+        free(str_buffer);
+         */
     }
 
     /// find the perfect match for str in vocab
@@ -455,7 +601,7 @@ fn generate(
     //    fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
     //    exit(EXIT_FAILURE);
     //}
-    encode(&tokenizer, &prompt, BosEos::BOS);
+    tokenizer.encode(&prompt, BosEos::BOS);
     todo!("HERE")
     /*
 
@@ -509,89 +655,6 @@ enum BosEos {
     MID,
     /// End of string
     EOS,
-}
-
-/// encode the string text (input) into an upper-bound preallocated tokens[] array
-/// bos != 0 means prepend the BOS token (=1), eos != 0 means append the EOS token (=2)
-fn encode(t: &Tokenizer, text: &str, bos_eos: BosEos) {
-    // void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *n_tokens)
-
-    // First, encode codepoint by codepoint, later merge succesive encoded tokens using the "best"
-    // match.
-
-    let mut tokens: Vec<usize> = Vec::with_capacity(text.len() + 3); // max. possible capacity, +3 for '\0', ?BOS, ?EOS
-
-    if let BosEos::BOS = bos_eos {
-        tokens.push(TOK_BOS)
-    }
-
-    // Original comment:
-    //   add_dummy_prefix is true by default
-    //   so prepend a dummy prefix token to the input string, but only if text != ""
-    //   pretty sure this isn't correct in the general case but I don't have the
-    //   energy to read more of the sentencepiece code to figure out what it's doing
-    if !text.is_empty() {
-        let dummy_prefix = t.str_lookup(" ").expect("could not find \" \"");
-        tokens.push(dummy_prefix.id);
-    }
-    {
-        // Decode codepoint by codepoint.
-        let mut tmp = [0u8; 4];
-        for c in text.chars() {
-            let s = c.encode_utf8(&mut tmp);
-            let tok = t
-                .str_lookup(&s)
-                .expect("Expected to find the single-character token. Fallback missing.");
-            tokens.push(tok.id);
-            deprintln!("encode {} {}", tok.token_str, tok.id);
-            //The original code had fallback that I skip here.
-            //  // byte_fallback encoding: just encode each byte as a token
-            //  // +3 is here because the first 3 vocab elements are <unk>, <s>, </s>
-            //  // so the individual bytes only start at index 3
-            //  for (int i=0; i < str_len; i++) {
-            //      tokens[(*n_tokens)++] = (unsigned char)str_buffer[i] + 3;
-        }
-    }
-
-    // merge the best consecutive pair each iteration, according the scores in vocab_scores
-
-    // TODO return tokens, return n_tokens
-    /*
-    while (1) {
-        float best_score = -1e10;
-        int best_id = -1;
-        int best_idx = -1;
-
-        for (int i=0; i < (*n_tokens-1); i++) {
-            // check if we can merge the pair (tokens[i], tokens[i+1])
-            sprintf(str_buffer, "%s%s", t->vocab[tokens[i]], t->vocab[tokens[i+1]]);
-            int id = str_lookup(str_buffer, t->sorted_vocab, t->vocab_size);
-            if (id != -1 && t->vocab_scores[id] > best_score) {
-                // this merge pair exists in vocab! record its score and position
-                best_score = t->vocab_scores[id];
-                best_id = id;
-                best_idx = i;
-            }
-        }
-
-        if (best_idx == -1) {
-            break; // we couldn't find any more pairs to merge, so we're done
-        }
-
-        // merge the consecutive pair (best_idx, best_idx+1) into new token best_id
-        tokens[best_idx] = best_id;
-        // delete token at position best_idx+1, shift the entire sequence back 1
-        for (int i = best_idx+1; i < (*n_tokens-1); i++) {
-            tokens[i] = tokens[i+1];
-        }
-        (*n_tokens)--; // token length decreased
-    }
-
-    // add optional EOS (=2) token, if desired
-    if (eos) tokens[(*n_tokens)++] = 2;
-
-    free(str_buffer);
-     */
 }
 
 fn main() {
