@@ -168,7 +168,7 @@ impl Tokenizer {
                 let s = c.encode_utf8(&mut tmp);
                 let tok = self
                     .str_lookup(&s)
-                    .expect("Expected to find the single-character token. Fallback missing.");
+                    .expect("Expected to find the single-character token. Fallback missing."); // fallback below
                 tokens.push(tok.id);
                 deprintln!("encode {} {}", tok.token_str, tok.id);
                 //The original code had fallback that I skip here.
@@ -180,74 +180,64 @@ impl Tokenizer {
             }
         }
 
-        // merge the best consecutive pair each iteration, according the scores in vocab_scores
+        #[derive(Debug)]
+        struct Best {
+            s: String,
+            /// Token at this idx will be replaced with tok_id.
+            tok_idx: usize,
+            tok_id: usize,
+            score: f32,
+        }
 
-        // let mut tokens_iter = tokens.into_iter();
+        let mut curr_best: Option<Best> = None;
         loop {
-            let mut curr_str_id_score: Option<(String, usize, f32)> = None;
-            // new_tokens holds the tokens after this iteration, that will became the input tokens
-            // to the next iteration.
-            let mut new_tokens: Vec<usize> = Vec::with_capacity(tokens.len());
-            for next_tok_id in &tokens {
-                let next_tok_id = *next_tok_id;
-                let next_tok_str = self.vocab.get(next_tok_id).unwrap().as_str();
-                if let Some((ref curr_str, curr_id, best_score)) = curr_str_id_score {
-                    let candidate_str = format!("{}{}", curr_str, next_tok_str);
-                    if let Some(candidate_token_index) = self.str_lookup(&candidate_str) {
-                        let candidate_score =
-                            *(self.vocab_scores.get(candidate_token_index.id).unwrap());
-                        if candidate_score > best_score {
-                            // The candidate is just better so keep it.
-                            curr_str_id_score =
-                                Some((candidate_str, candidate_token_index.id, candidate_score));
+            for tok_idx in (0..tokens.len() - 1) {
+                let str0 = self.vocab.get(*tokens.get(tok_idx + 0).unwrap()).unwrap();
+                let str1 = self.vocab.get(*tokens.get(tok_idx + 1).unwrap()).unwrap();
+                let candidate_str = format!("{}{}", str0, str1);
+                if let Some(found) = self.str_lookup(&candidate_str) {
+                    let candidate_score = *(self.vocab_scores.get(found.id).unwrap());
+                    if let Some(best) = &curr_best {
+                        if candidate_score > best.score {
+                            curr_best = Some(Best {
+                                s: candidate_str,
+                                tok_idx,
+                                tok_id: found.id,
+                                score: candidate_score,
+                            });
                         } else {
-                            // The candidate merged from "curr" and "next" is not better than the current one, so use the current,
-                            // reset the state, and continue.
-                            new_tokens.push(curr_id);
-                            curr_str_id_score = Some((
-                                next_tok_str.to_string(),
-                                next_tok_id,
-                                *(self.vocab_scores.get(next_tok_id).unwrap()),
-                            ));
+                            // The candidate is not better so just carry on.
                         }
                     } else {
-                        // A "merged" token not found in vocab, so just use whatever we have
-                        // already and carry on.
-                        new_tokens.push(curr_id);
-                        curr_str_id_score = Some((
-                            next_tok_str.to_string(),
-                            next_tok_id,
-                            *(self.vocab_scores.get(next_tok_id).unwrap()),
-                        ));
+                        // Just use the candidate as there is nothing to compare with.
+                        curr_best = Some(Best {
+                            s: candidate_str,
+                            tok_idx,
+                            tok_id: found.id,
+                            score: candidate_score,
+                        });
                     }
                 } else {
-                    // The state is empty, so use the "next" token.
-                    curr_str_id_score = Some((
-                        next_tok_str.to_string(),
-                        next_tok_id,
-                        *(self.vocab_scores.get(next_tok_id).unwrap()),
-                    ));
+                    // Candidate not found in vocab, so carry on with the next token pair.
                 }
             }
-            if let Some((_, curr_id, _)) = curr_str_id_score {
-                new_tokens.push(curr_id);
-            }
-            // TODO Add some assertion that checks if the string decodes correctly
-            assert!(new_tokens.len() <= tokens.len(), "encoding erorr");
-            if new_tokens.len() < tokens.len() {
-                // The new tokens list is shorter, i.e. "better", use it in another iteration.
-                deprintln!("encode improved: {} < {}", new_tokens.len(), tokens.len());
-                tokens = new_tokens;
-            } else if new_tokens.len() == tokens.len() {
-                // No progress, quit merging.
-                deprintln!("encode stop: {}={}", new_tokens.len(), tokens.len());
-                tokens = new_tokens;
-                break;
+            if let Some(best) = curr_best {
+                // Replace the token with the best candidate
+                *(tokens.get_mut(best.tok_idx).unwrap()) = best.tok_id;
+                // Shift all the tokens after the best one to the left by 1, because we merged two
+                // tokens into a pair.
+                for i in best.tok_idx + 1..tokens.len() - 1 {
+                    let t = *(tokens.get(i + 1).unwrap());
+                    *(tokens.get_mut(i).unwrap()) = t;
+                }
+                tokens.pop();
+                curr_best = None;
             } else {
-                assert!(new_tokens.len() <= tokens.len(), "encoding erorr");
-                unreachable!();
+                // Failed to merge a pair, time to end.
+                break;
             }
         }
+        assert!(curr_best.is_none(), "{curr_best:?}");
 
         // Compare the decoded text and check if it is the same as the original.
         #[cfg(feature = "debug")]
@@ -745,6 +735,7 @@ mod tests {
             LazyLock::new(|| Mutex::new(Tokenizer::build("tokenizer.bin", 32000)));
     }
 
+    // The tests are 1:1 with the original C tests.
     #[test]
     fn test_tokenizer_0() {
         assert_encoding("", vec![1]);
@@ -755,6 +746,40 @@ mod tests {
         assert_encoding(
             "I believe the meaning of life is",
             vec![1, 306, 4658, 278, 6593, 310, 2834, 338],
+        );
+    }
+
+    #[test]
+    fn test_tokenizer_2() {
+        assert_encoding(
+            "Simply put, the theory of relativity states that ",
+            vec![
+                1, 3439, 17632, 1925, 29892, 278, 6368, 310, 14215, 537, 5922, 393, 29871,
+            ],
+        );
+    }
+
+    #[test]
+    fn test_tokenizer_3() {
+        assert_encoding(
+            "A brief message congratulating the team on the launch:\n\n        Hi everyone,\n\n        I just ",
+            vec![
+                1, 319, 11473, 2643, 378, 629, 271, 18099, 278, 3815, 373, 278, 6826, 29901, 13,
+                13, 4706, 6324, 14332, 29892, 13, 13, 4706, 306, 925, 29871,
+            ],
+        );
+    }
+
+    #[test]
+    fn test_tokenizer_4() {
+        assert_encoding(
+            "Translate English to French:\n\n        sea otter => loutre de mer\n        peppermint => menthe poivrée\n        plush girafe => girafe peluche\n        cheese =>",
+            vec![
+                1, 4103, 9632, 4223, 304, 5176, 29901, 13, 13, 4706, 7205, 4932, 357, 1149, 301,
+                449, 276, 316, 2778, 13, 4706, 1236, 407, 837, 524, 1149, 6042, 354, 772, 440,
+                29878, 1318, 13, 4706, 715, 1878, 330, 3055, 1725, 1149, 330, 3055, 1725, 4639,
+                28754, 13, 4706, 923, 968, 1149,
+            ],
         );
     }
 
@@ -783,19 +808,4 @@ mod tests {
         }
         out
     }
-
-    //// test 2
-    //char* prompt2 = "Simply put, the theory of relativity states that ";
-    //int expected_tokens2[] = {1, 3439, 17632, 1925, 29892, 278, 6368, 310, 14215, 537, 5922, 393, 29871};
-    //test_prompt_encoding(&tokenizer, prompt2, expected_tokens2, sizeof(expected_tokens2) / sizeof(int));
-
-    //// test 3
-    //char* prompt3 = "A brief message congratulating the team on the launch:\n\n        Hi everyone,\n\n        I just ";
-    //int expected_tokens3[] = {1, 319, 11473, 2643, 378, 629, 271, 18099, 278, 3815, 373, 278, 6826, 29901, 13, 13, 4706, 6324, 14332, 29892, 13, 13, 4706, 306, 925, 29871};
-    //test_prompt_encoding(&tokenizer, prompt3, expected_tokens3, sizeof(expected_tokens3) / sizeof(int));
-
-    //// test 4
-    //char* prompt4 = "Translate English to French:\n\n        sea otter => loutre de mer\n        peppermint => menthe poivrée\n        plush girafe => girafe peluche\n        cheese =>";
-    //int expected_tokens4[] = {1, 4103, 9632, 4223, 304, 5176, 29901, 13, 13, 4706, 7205, 4932, 357, 1149, 301, 449, 276, 316, 2778, 13, 4706, 1236, 407, 837, 524, 1149, 6042, 354, 772, 440, 29878, 1318, 13, 4706, 715, 1878, 330, 3055, 1725, 1149, 330, 3055, 1725, 4639, 28754, 13, 4706, 923, 968, 1149};
-    //test_prompt_encoding(&tokenizer, prompt4, expected_tokens4, sizeof(expected_tokens4) / sizeof(int));
 }
