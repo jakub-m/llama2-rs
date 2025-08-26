@@ -9,7 +9,7 @@ use std::{
 
 #[cfg(feature = "debug")]
 #[macro_export]
-macro_rules! deprintln {
+macro_rules! debug_eprintln {
     ($($arg:tt)*) => {
         {
             eprintln!($($arg)*);
@@ -19,7 +19,7 @@ macro_rules! deprintln {
 
 #[cfg(feature = "debug")]
 #[macro_export]
-macro_rules! deprint {
+macro_rules! debug_eprint {
     ($($arg:tt)*) => {
         {
             eprint!($($arg)*);
@@ -29,7 +29,7 @@ macro_rules! deprint {
 
 #[cfg(not(feature = "debug"))]
 #[macro_export]
-macro_rules! deprintln {
+macro_rules! debug_eprintln {
     ($($arg:tt)*) => {
         /* nop */
     };
@@ -37,7 +37,7 @@ macro_rules! deprintln {
 
 #[cfg(not(feature = "debug"))]
 #[macro_export]
-macro_rules! deprint {
+macro_rules! debug_eprint {
     ($($arg:tt)*) => {
         /* nop */
     };
@@ -93,7 +93,7 @@ impl Tokenizer {
             let mut buf: Vec<u8> = vec![0u8; len as usize];
             reader.read_exact(&mut buf).unwrap();
             let s = String::from_utf8(buf).unwrap();
-            deprintln!("{i}: score={score} len={len} s={s:?}");
+            debug_eprintln!("{i}: score={score} len={len} s={s:?}");
             vocab[i] = Rc::new(s);
         }
 
@@ -121,9 +121,9 @@ impl Tokenizer {
             .collect();
         sorted_vocab.sort_by(|a, b| a.token_str.partial_cmp(&b.token_str).unwrap());
 
-        for s in &sorted_vocab {
-            deprintln!("sorted_vocab {}, {}", s.token_str, s.id);
-        }
+        //for s in &sorted_vocab {
+        //    debug_eprintln!("sorted_vocab {}, {}", s.token_str, s.id);
+        //}
 
         Tokenizer {
             vocab_size,
@@ -166,17 +166,21 @@ impl Tokenizer {
             let mut tmp = [0u8; 4];
             for c in text.chars() {
                 let s = c.encode_utf8(&mut tmp);
-                let tok = self
-                    .str_lookup(&s)
-                    .expect("Expected to find the single-character token. Fallback missing."); // fallback below
-                tokens.push(tok.id);
-                deprintln!("encode {} {}", tok.token_str, tok.id);
-                //The original code had fallback that I skip here.
-                //  // byte_fallback encoding: just encode each byte as a token
-                //  // +3 is here because the first 3 vocab elements are <unk>, <s>, </s>
-                //  // so the individual bytes only start at index 3
-                //  for (int i=0; i < str_len; i++) {
-                //      tokens[(*n_tokens)++] = (unsigned char)str_buffer[i] + 3;
+                if let Some(tok) = self.str_lookup(&s) {
+                    tokens.push(tok.id);
+                    debug_eprintln!("encode {} {}", tok.token_str, tok.id);
+                } else {
+                    // byte_fallback encoding: just encode each byte as a token
+                    // +3 is here because the first 3 vocab elements are <unk>, <s>, </s>
+                    // so the individual bytes only start at index 3
+                    debug_eprintln!("encode fallback for {s:?}");
+                    for b in s.as_bytes() {
+                        let i = ((*b + 3) as usize);
+                        debug_eprint!(" {b:#x} {i}");
+                        tokens.push(i)
+                    }
+                    debug_eprintln!("");
+                }
             }
         }
 
@@ -240,7 +244,10 @@ impl Tokenizer {
         assert!(curr_best.is_none(), "{curr_best:?}");
 
         // Compare the decoded text and check if it is the same as the original.
-        #[cfg(feature = "debug")]
+        // This test will fail for input containing non-ascii entries (like, new lines), because
+        // the encoder uses for \n tokens that are literal <0x0A> (6 characters in angle brackts), instad
+        // of a byte of value 0x0a (same applies for other non-ascii characters).
+        #[cfg(feature = "debug-encoder")]
         {
             let mut decoded = String::new();
             let mut original = String::new();
@@ -254,18 +261,18 @@ impl Tokenizer {
             if let AddEos::Yes = add_eos {
                 original.push_str("\n</s>\n")
             }
-            deprint!("|");
+            debug_eprint!("|");
             for tok_id in &tokens {
                 let s = self.vocab.get(*tok_id).unwrap();
                 decoded.push_str(s.as_str());
-                deprint!("{}|", s);
+                debug_eprint!("{}|", s);
             }
-            deprintln!("");
+            debug_eprintln!("");
             assert_eq!(
                 &decoded, &original,
                 "decoded (left) and original (right) text do not match"
             );
-            deprintln!("decoded and original match");
+            debug_eprintln!("decoded and original match");
         }
 
         tokens
@@ -341,7 +348,7 @@ impl<'a> Transformer<'a> {
             let mut buf = [0u8; size_of::<ConfigDeser>()];
             file.read_exact(&mut buf).unwrap();
             let config_deser: ConfigDeser = unsafe { std::mem::transmute(buf) };
-            deprintln!("{config_deser:?}");
+            debug_eprintln!("{config_deser:?}");
             shared_weights = config_deser.is_shared_weights();
             config = config_deser.into();
         }
@@ -679,7 +686,7 @@ fn main() {
     let args = Args::parse();
     assert!(args.temperature >= 0.0 && args.temperature <= 1.0);
     assert!(args.topp >= 0.0 && args.topp <= 1.0);
-    deprintln!("{args:?}");
+    debug_eprintln!("{args:?}");
 
     let transformer = Transformer::build(&args.checkpoint_path);
     assert!(args.steps <= transformer.config.seq_len);
@@ -726,13 +733,17 @@ fn default_seed() -> u128 {
 
 #[cfg(test)]
 mod tests {
+    use super::debug_eprintln;
     use crate::{AddBos, Tokenizer};
     use std::sync::{LazyLock, Mutex};
 
     // TOKENIZER tries to share the Tokenizer across test cases.
     thread_local! { // Tokenizer is not Sync, works with thread_local.
         static TOKENIZER: LazyLock<Mutex<Tokenizer>> =
-            LazyLock::new(|| Mutex::new(Tokenizer::build("tokenizer.bin", 32000)));
+            LazyLock::new(|| Mutex::new({
+                let p = "tokenizer.bin";
+                debug_eprintln!("Loading {p}");
+                Tokenizer::build(p, 32000)}));
     }
 
     // The tests are 1:1 with the original C tests.
