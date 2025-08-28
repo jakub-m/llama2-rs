@@ -93,6 +93,7 @@ impl Tokenizer {
             let mut buf: Vec<u8> = vec![0u8; len as usize];
             reader.read_exact(&mut buf).unwrap();
             let s = String::from_utf8(buf).unwrap();
+            #[cfg(feature = "debug-encoder")]
             debug_eprintln!("{i}: score={score} len={len} s={s:?}");
             vocab[i] = Rc::new(s);
         }
@@ -168,17 +169,20 @@ impl Tokenizer {
                 let s = c.encode_utf8(&mut tmp);
                 if let Some(tok) = self.str_lookup(&s) {
                     tokens.push(tok.id);
+                    #[cfg(feature = "debug-encoder")]
                     debug_eprintln!("encode {} {}", tok.token_str, tok.id);
                 } else {
                     // byte_fallback encoding: just encode each byte as a token
                     // +3 is here because the first 3 vocab elements are <unk>, <s>, </s>
                     // so the individual bytes only start at index 3
+                    #[cfg(feature = "debug-encoder")]
                     debug_eprintln!("encode fallback for {s:?}");
                     for b in s.as_bytes() {
                         let i = ((*b + 3) as usize);
                         debug_eprint!(" {b:#x} {i}");
                         tokens.push(i)
                     }
+                    #[cfg(feature = "debug-encoder")]
                     debug_eprintln!("");
                 }
             }
@@ -295,7 +299,7 @@ struct Transformer<'a> {
     /// the weights of the model
     weights: TransformerWeights<'a>,
     /// buffers for the "wave" of activations in the forward pass
-    state: RunState,
+    // state: RunState,
     //    // some more state needed to properly clean up the memory mapping (sigh)
     //    int fd; // file descriptor for memory mapping
     //    float* data; // memory mapped data pointer
@@ -329,13 +333,16 @@ impl<'a> Transformer<'a> {
     fn build(checkpoint_path: &str) -> Self {
         // void build_transformer(Transformer *t, char* checkpoint_path) {
         let (config, checkpoint) = Self::read_checkpoint(checkpoint_path);
-        let state = RunState::new(&config);
+        //let state = RunState::new(&config);
         Transformer {
             config,
-            state,
             weights: checkpoint.transformer_weights,
             file: checkpoint.file,
         }
+    }
+
+    fn new_run_state(&self) -> RunState {
+        RunState::new(&self.config)
     }
 
     fn read_checkpoint<'c>(checkpoint_path: &str) -> (Config, Checkpoint<'c>) {
@@ -607,6 +614,7 @@ impl From<ConfigDeser> for Config {
     }
 }
 
+/// steps - number of steps to run.
 fn generate(
     transformer: &Transformer,
     tokenizer: &Tokenizer,
@@ -614,59 +622,101 @@ fn generate(
     prompt: String,
     steps: usize,
 ) {
-    // encode the (string) prompt into tokens sequence
-    //num_prompt_tokens: usize = 0;
-    //int* prompt_tokens = (int*)malloc((strlen(prompt)+3) * sizeof(int)); // +3 for '\0', ?BOS, ?EOS
-    //encode(tokenizer, prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
-    //if (num_prompt_tokens < 1) {
-    //    fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
-    //    exit(EXIT_FAILURE);
-    //}
-    tokenizer.encode(&prompt, AddBos::Yes, AddEos::No);
-    todo!("HERE")
-    /*
-
+    let prompt_tokens = tokenizer.encode(&prompt, AddBos::Yes, AddEos::No);
+    let mut prompt_tokens = prompt_tokens.iter();
     // start the main loop
-    long start = 0;  // used to time our code, only initialized after first iteration
-    int next;        // will store the next token in the sequence
-    int token = prompt_tokens[0]; // kick off with the first token in the prompt
-    int pos = 0;     // position in the sequence
-    while (pos < steps) {
+    // let mut next = 0_usize;        // will store the next token in the sequence
+    let token = *(prompt_tokens.next().unwrap());
+    let mut pos: usize = 0; // position in the sequence
+    while pos < steps {
+        /*
+           // forward the transformer to get logits for the next token
+           float* logits = forward(transformer, token, pos);
 
-        // forward the transformer to get logits for the next token
-        float* logits = forward(transformer, token, pos);
+           // advance the state machine
+           if (pos < num_prompt_tokens - 1) {
+               // if we are still processing the input prompt, force the next prompt token
+               next = prompt_tokens[pos + 1];
+           } else {
+               // otherwise sample the next token from the logits
+               next = sample(sampler, logits);
+           }
+           pos++;
 
-        // advance the state machine
-        if (pos < num_prompt_tokens - 1) {
-            // if we are still processing the input prompt, force the next prompt token
-            next = prompt_tokens[pos + 1];
-        } else {
-            // otherwise sample the next token from the logits
-            next = sample(sampler, logits);
-        }
-        pos++;
+           // data-dependent terminating condition: the BOS (=1) token delimits sequences
+           if (next == 1) { break; }
 
-        // data-dependent terminating condition: the BOS (=1) token delimits sequences
-        if (next == 1) { break; }
-
-        // print the token as string, decode it with the Tokenizer object
-        char* piece = decode(tokenizer, token, next);
-        safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
-        fflush(stdout);
-        token = next;
-
-        // init the timer here because the first iteration can be slower
-        if (start == 0) { start = time_in_ms(); }
+           // print the token as string, decode it with the Tokenizer object
+           char* piece = decode(tokenizer, token, next);
+           safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
+           fflush(stdout);
+           token = next;
+        */
+        todo!("HERE")
     }
-    printf("\n");
-
-    // report achieved tok/s (pos-1 because the timer starts after first iteration)
-    if (pos > 1) {
-        long end = time_in_ms();
-        fprintf(stderr, "achieved tok/s: %f\n", (pos-1) / (double)(end-start)*1000);
-    }
-     */
+    // TODO report achieved tok/s (pos-1 because the timer starts after first iteration)
 }
+
+fn forward(transformer: &Transformer, token: usize, pos: usize) {
+    let p = &transformer.config;
+    let w = &transformer.weights;
+    let mut s = transformer.new_run_state();
+    let mut x = s.x;
+    let dim = p.dim;
+    //int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+    //int kv_mul = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
+    //int hidden_dim =  p->hidden_dim;
+    //int head_size = dim / p->n_heads;
+
+    // copy the token embedding into x
+    //float* content_row = w->token_embedding_table + token * dim;
+    //memcpy(x, content_row, dim*sizeof(*x));
+    x.clear();
+    x.extend_from_slice(&w.token_embedding_table[token * dim..(token + 1) * dim]);
+
+    for l in 0..p.n_layers {
+        // attention rmsnorm
+        //rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
+        rmsnorm(&mut s.xb, &mut x, &w.rms_att_weight[l * dim..], dim);
+        //rmsnorm(Vec<f32>, Vec<f32>, &[f32], usize);
+        todo!("HERE");
+    }
+
+    // forward all the layers
+}
+
+fn rmsnorm(o: &mut [f32], x: &[f32], weight: &[f32], size: usize) {
+    // calculate sum of squares
+    let mut ss: f32 = 0_f32;
+    for j in 0..size {
+        ss += x[j] * x[j]
+    }
+    ss /= size as f32;
+    ss += 1e-5;
+    ss = 1.0_f32 / ss.sqrt();
+    // normalize and scale
+    for j in 0..size {
+        o[j] = weight[j] * (ss * x[j]);
+    }
+}
+
+/// W (d,n) @ x (n,) -> xout (d,)
+/// by far the most amount of time is spent inside this little function
+fn matmul(xout: &mut [f32], x: &[f32], w: &[f32], n: usize, d: usize) {
+    // TODO   #pragma omp parallel for private(i)
+    for i in 0..d {
+        let mut val: f32 = 0.0;
+        for j in 0..n {
+            val += w[i * n + j] * x[j];
+        }
+        xout[i] = val;
+    }
+}
+
+/*
+void matmul(float* xout, float* x, float* w, int n, int d) {
+}
+ */
 
 /// Should mark beginnig of string.
 #[derive(Debug)]
@@ -734,7 +784,7 @@ fn default_seed() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::debug_eprintln;
-    use crate::{AddBos, Tokenizer};
+    use crate::{AddBos, Tokenizer, matmul, rmsnorm};
     use std::sync::{LazyLock, Mutex};
 
     // TOKENIZER tries to share the Tokenizer across test cases.
@@ -792,6 +842,51 @@ mod tests {
                 28754, 13, 4706, 923, 968, 1149,
             ],
         );
+    }
+
+    #[test]
+    fn test_rms() {
+        let mut o: Vec<f32> = vec![0., 0., 0., 0.];
+        let x: Vec<f32> = vec![1., 2., 3., 4.];
+        let weight: Vec<f32> = vec![0.1, 1.0, 10.0, 100.0];
+        let size = 4_usize;
+
+        rmsnorm(&mut o, &x, &weight, size);
+        let rms = ((((1 * 1) + (2 * 2) + (3 * 3) + (4 * 4)) as f32) / 4.0).sqrt();
+        let expected = [0.1 / rms, 2.0 / rms, 30.0 / rms, 400.0 / rms];
+
+        assert_eq!(expected.len(), o.len());
+        for i in 0..o.len() {
+            assert!(
+                (o[i] - expected[i]).abs() < 1e-4,
+                "actual {o:?}\nexpected {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_matmul() {
+        let w: Vec<f32> = vec![
+            0.1, 0.2, 0.3, // r0
+            0.4, 0.5, 0.6, // r1
+        ];
+        let x: Vec<f32> = vec![
+            1.0, //r0
+            2.0, //r1
+            3.0, //r2
+        ];
+
+        let mut xout: Vec<f32> = vec![0.0; 2];
+
+        matmul(&mut xout, &x, &w, 3, 2);
+        assert_eq!(
+            xout,
+            vec![
+                0.1 * 1.0 + 0.2 * 2.0 + 0.3 * 3.0, //r0
+                0.4 * 1.0 + 0.5 * 2.0 + 0.6 * 3.0, //r1
+            ]
+        );
+        assert_eq!(xout.len(), 2);
     }
 
     fn assert_encoding(text: &str, expected_tokens: Vec<usize>) {
