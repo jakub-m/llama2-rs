@@ -672,9 +672,8 @@ fn forward(transformer: &Transformer, token: usize, pos: usize) {
 
     // copy the token embedding into x
     //float* content_row = w->token_embedding_table + token * dim;
-    //memcpy(x, content_row, dim*sizeof(*x));
-    //slicecpy(&mut x, &w.token_embedding_table[token * dim..], dim);
-    slicecpy(&mut x[..], &w.token_embedding_table[token * dim..], dim);
+    let content_row = &w.token_embedding_table[token * dim..];
+    slicecpy(&mut x[..], &content_row, dim);
 
     for l in 0..p.n_layers {
         // attention rmsnorm
