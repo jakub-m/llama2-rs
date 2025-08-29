@@ -1,5 +1,6 @@
 use clap::Parser;
 use memmap2::{Mmap, MmapOptions};
+use rayon::prelude::*;
 use std::{
     fs::{File, metadata},
     io::{BufReader, Read},
@@ -386,7 +387,8 @@ impl<'a> Transformer<'a> {
 struct RunState {
     /// activation at current time stamp (dim,)
     x: Vec<f32>, //float *x;
-    /// same, but inside a residual branch (dim,)
+    /// activation at current time stamp
+    /// but inside a residual branch (dim,)
     xb: Vec<f32>, // float *xb;
     /// an additional buffer just for convenience (dim,)
     xb2: Vec<f32>, //float *xb2;
@@ -663,7 +665,7 @@ fn forward(transformer: &Transformer, token: usize, pos: usize) {
     let mut s = transformer.new_run_state();
     let mut x = s.x;
     let dim = p.dim;
-    //int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+    let kv_dim = (p.dim * p.n_kv_heads) / p.n_heads;
     //int kv_mul = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
     //int hidden_dim =  p->hidden_dim;
     //int head_size = dim / p->n_heads;
@@ -671,14 +673,26 @@ fn forward(transformer: &Transformer, token: usize, pos: usize) {
     // copy the token embedding into x
     //float* content_row = w->token_embedding_table + token * dim;
     //memcpy(x, content_row, dim*sizeof(*x));
-    x.clear();
-    x.extend_from_slice(&w.token_embedding_table[token * dim..(token + 1) * dim]);
+    //slicecpy(&mut x, &w.token_embedding_table[token * dim..], dim);
+    slicecpy(&mut x[..], &w.token_embedding_table[token * dim..], dim);
 
     for l in 0..p.n_layers {
         // attention rmsnorm
         //rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
         rmsnorm(&mut s.xb, &mut x, &w.rms_att_weight[l * dim..], dim);
-        //rmsnorm(Vec<f32>, Vec<f32>, &[f32], usize);
+        // key and value point to the kv cache
+        let loff = l * p.seq_len * kv_dim; // kv cache layer offset for convenience
+        //s->k = s->key_cache + loff + pos * kv_dim;
+        let s_k = &mut s.key_cache[loff + pos * kv_dim..];
+        //s->v = s->value_cache + loff + pos * kv_dim;
+        let s_v = &mut s.value_cache[loff + pos * kv_dim..];
+        //
+        // qkv matmuls for this position
+        matmul(&mut s.q, &s.xb, &w.wq[l * dim * dim..], dim, dim);
+        // matmul(s->k, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
+        matmul(s_k, &s.xb, &w.wk[l * dim * kv_dim..], dim, kv_dim);
+        // matmul(s->v, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
+        matmul(s_v, &s.xb, &w.wv[l * dim * kv_dim..], dim, kv_dim);
         todo!("HERE");
     }
 
@@ -703,20 +717,29 @@ fn rmsnorm(o: &mut [f32], x: &[f32], weight: &[f32], size: usize) {
 /// W (d,n) @ x (n,) -> xout (d,)
 /// by far the most amount of time is spent inside this little function
 fn matmul(xout: &mut [f32], x: &[f32], w: &[f32], n: usize, d: usize) {
-    // TODO   #pragma omp parallel for private(i)
-    for i in 0..d {
+    xout.par_iter_mut().enumerate().for_each(|(i, xout_val)| {
         let mut val: f32 = 0.0;
         for j in 0..n {
             val += w[i * n + j] * x[j];
         }
-        xout[i] = val;
-    }
+        *xout_val = val;
+    });
 }
 
-/*
-void matmul(float* xout, float* x, float* w, int n, int d) {
+//fn slicecpy<T: Clone>(target: &mut Vec<T>, source: &[T], n_t: usize) {
+//    let capacity_init = target.capacity();
+//    target.clear();
+//    target.extend_from_slice(&source[..n_t]);
+//    assert_eq!(
+//        capacity_init,
+//        target.capacity(),
+//        "Error! the vector was reallocated but it should not have"
+//    );
+//}
+
+fn slicecpy<T: Clone>(target: &mut [T], source: &[T], n_t: usize) {
+    target[..n_t].clone_from_slice(&source[..n_t]);
 }
- */
 
 /// Should mark beginnig of string.
 #[derive(Debug)]
@@ -784,7 +807,7 @@ fn default_seed() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::debug_eprintln;
-    use crate::{AddBos, Tokenizer, matmul, rmsnorm};
+    use crate::{AddBos, Tokenizer, matmul, rmsnorm, slicecpy};
     use std::sync::{LazyLock, Mutex};
 
     // TOKENIZER tries to share the Tokenizer across test cases.
@@ -887,6 +910,14 @@ mod tests {
             ]
         );
         assert_eq!(xout.len(), 2);
+    }
+
+    #[test]
+    fn test_slicecpy() {
+        let mut t: Vec<f32> = vec![0.0; 3];
+        let s: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        slicecpy(&mut t[..], &s[2..], 3);
+        assert_eq!(t, vec![3.0, 4.0, 5.0]);
     }
 
     fn assert_encoding(text: &str, expected_tokens: Vec<usize>) {
