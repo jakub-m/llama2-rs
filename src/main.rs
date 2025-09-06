@@ -2,6 +2,7 @@ use clap::Parser;
 use memmap2::{Mmap, MmapOptions};
 use rayon::prelude::*;
 use std::{
+    f32,
     fs::{File, metadata},
     io::{BufReader, Read},
     rc::Rc,
@@ -403,7 +404,9 @@ struct RunState {
     /// value (dim,)
     // v: Vec<f32>, //float *v;
     /// buffer for scores/attention values (n_heads, seq_len)
-    att: Vec<f32>, //float *att;
+    /// In RS it's a vector-of-vectors, so the attention heads can be run in parallel.
+    /// The "outter" [Vec] is the attention head, the inner are is the attention vector.
+    att: Vec<Vec<f32>>, //float *att;
     /// output logits
     logits: Vec<f32>, //float *logits;
     /// kv cache (layer, seq_len, dim)
@@ -423,7 +426,8 @@ impl RunState {
         let q = vec![0_f32; p.dim]; //s->q = calloc(p->dim, sizeof(float));
         let key_cache = vec![0_f32; p.n_layers * p.seq_len * kv_dim]; //s->key_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
         let value_cache = vec![0_f32; p.n_layers * p.seq_len * kv_dim]; //s->value_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
-        let att = vec![0_f32; p.n_heads * p.seq_len]; //s->att = calloc(p->n_heads * p->seq_len, sizeof(float));
+        //let att = vec![0_f32; p.n_heads * p.seq_len]; //s->att = calloc(p->n_heads * p->seq_len, sizeof(float));
+        let att: Vec<Vec<f32>> = (0..p.n_heads).map(|_| vec![0_f32; p.seq_len]).collect();
         let logits = vec![0_f32; p.vocab_size]; //s->logits = calloc(p->vocab_size, sizeof(float));
         RunState {
             x,
@@ -578,8 +582,10 @@ impl ConfigDeser {
 #[derive(Debug)]
 struct Config {
     /// transformer dimension
+    /// size of embedding vector
     dim: usize,
     /// for ffn layers
+    /// size oof hidden representation vector
     hidden_dim: usize,
     /// number of layers
     n_layers: usize,
@@ -659,6 +665,7 @@ fn generate(
     // TODO report achieved tok/s (pos-1 because the timer starts after first iteration)
 }
 
+/// pos is i-th position of the token among all the tokens.
 fn forward(transformer: &Transformer, token: usize, pos: usize) {
     let p = &transformer.config;
     let w = &transformer.weights;
@@ -666,9 +673,9 @@ fn forward(transformer: &Transformer, token: usize, pos: usize) {
     let mut x = s.x;
     let dim = p.dim;
     let kv_dim = (p.dim * p.n_kv_heads) / p.n_heads;
-    //int kv_mul = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
+    let kv_mul = p.n_heads / p.n_kv_heads; // integer multiplier of the kv sharing in multiquery
     //int hidden_dim =  p->hidden_dim;
-    //int head_size = dim / p->n_heads;
+    let head_size = dim / p.n_heads;
 
     // copy the token embedding into x
     //float* content_row = w->token_embedding_table + token * dim;
@@ -687,11 +694,75 @@ fn forward(transformer: &Transformer, token: usize, pos: usize) {
         let s_v = &mut s.value_cache[loff + pos * kv_dim..];
         //
         // qkv matmuls for this position
-        matmul(&mut s.q, &s.xb, &w.wq[l * dim * dim..], dim, dim);
+        matmul(&mut s.q, &s.xb, &w.wq[l * dim * dim..], dim, dim); // s.q = wq(l) @ xb
         // matmul(s->k, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
-        matmul(s_k, &s.xb, &w.wk[l * dim * kv_dim..], dim, kv_dim);
+        matmul(s_k, &s.xb, &w.wk[l * dim * kv_dim..], dim, kv_dim); // s_k = wk(l) @ xb
         // matmul(s->v, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
-        matmul(s_v, &s.xb, &w.wv[l * dim * kv_dim..], dim, kv_dim);
+        matmul(s_v, &s.xb, &w.wv[l * dim * kv_dim..], dim, kv_dim); // s_v = wv(l) @ xb
+
+        // RoPE relative positional encoding: complex-valued rotate q and k in each head
+        // QUESTION: Why query and key are rotated in-place while iterating over each layer?
+        for i_dim in (0..dim).step_by(2) {
+            let head_dim = i_dim % head_size;
+            //let freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
+            let freq = 1.0_f32 / 10000.0_f32.powf((head_dim as f32) / (head_size as f32));
+            let val = (pos as f32) * freq;
+            let fcr = val.cos();
+            let fci = val.sin();
+
+            #[inline(always)]
+            fn rotate(vec: &mut [f32], i: usize, fcr: f32, fci: f32) {
+                let v0 = vec[i];
+                let v1 = vec[i + 1];
+                vec[i] = v0 * fcr - v1 * fci;
+                vec[i + 1] = v0 * fci + v1 * fcr;
+            }
+
+            // rotate query at positions pairwise, in place.
+            rotate(&mut s.q, i_dim, fcr, fci);
+            // rotate keys
+            if i_dim < kv_dim {
+                rotate(s_k, i_dim, fcr, fci);
+            }
+        }
+        // multihead attention. iterate over all attention heads
+        (s.att).par_iter_mut().enumerate().for_each(|(h, att)| {
+            // h is the ith head, att are the attention scores for this head
+            // get the query vector for this head
+            let q = s.q.slice_at(h * head_size, head_size);
+            // iterate over all timesteps, including the current one
+            (0..(pos + 1)).for_each(|t| {
+                // get the key vector for this head and at this timestep
+                let k = &s.key_cache[loff + t * kv_dim + (h / kv_mul) * head_size..];
+                // calculate the attention score as the dot product of q and k
+                let mut score: f32 = 0.0;
+
+                for i in 0..head_size {
+                    score += q[i] * k[i];
+                }
+                score /= (head_size as f32).sqrt();
+                // save the score to the attention buffer
+                att[t] = score;
+            });
+
+            // softmax the scores to get attention weights, from 0..pos inclusively
+            softmax(att, pos + 1);
+
+            // NOTE xb is per head?, can be Vec<Vec<..>>? Might be easier to write.
+            // // weighted sum of the values, store back into xb
+            let xb = &mut s.xb[h * head_size..];
+            // memset(xb, 0, head_size * sizeof(float));
+            // for (int t = 0; t <= pos; t++) {
+            //     // get the value vector for this head and at this timestep
+            //     float* v = s->value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
+            //     // get the attention weight for this timestep
+            //     float a = att[t];
+            //     // accumulate the weighted value into xb
+            //     for (int i = 0; i < head_size; i++) {
+            //         xb[i] += a * v[i];
+            //     }
+            // }
+        });
         todo!("HERE");
     }
 
@@ -710,6 +781,21 @@ fn rmsnorm(o: &mut [f32], x: &[f32], weight: &[f32], size: usize) {
     // normalize and scale
     for j in 0..size {
         o[j] = weight[j] * (ss * x[j]);
+    }
+}
+
+fn softmax(x: &mut [f32], size: usize) {
+    // find max value (for numerical stability)
+    let max_val = x.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    // exp and sum
+    let mut sum: f32 = 0.0;
+    for i in 0..size {
+        x[i] = (x[i] - max_val).exp();
+        sum += x[i];
+    }
+    // normalize
+    for i in 0..size {
+        x[i] /= sum;
     }
 }
 
@@ -801,6 +887,17 @@ fn default_seed() -> u128 {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis()
+}
+
+/// A helper trait for getting the slices at position, with length.
+trait SliceAt<T> {
+    fn slice_at(&self, start: usize, len: usize) -> &[T];
+}
+
+impl<T> SliceAt<T> for Vec<T> {
+    fn slice_at(&self, start: usize, len: usize) -> &[T] {
+        &self[start..start + len]
+    }
 }
 
 #[cfg(test)]
