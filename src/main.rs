@@ -666,15 +666,20 @@ fn generate(
 }
 
 /// pos is i-th position of the token among all the tokens.
-fn forward(transformer: &Transformer, token: usize, pos: usize) {
+fn forward<'a>(
+    transformer: &Transformer,
+    s: &'a mut RunState,
+    token: usize,
+    pos: usize,
+) -> &'a [f32] {
     let p = &transformer.config;
     let w = &transformer.weights;
-    let mut s = transformer.new_run_state();
-    let mut x = s.x;
+    //let mut s = transformer.new_run_state();
+    let x = &mut s.x;
     let dim = p.dim;
     let kv_dim = (p.dim * p.n_kv_heads) / p.n_heads;
     let kv_mul = p.n_heads / p.n_kv_heads; // integer multiplier of the kv sharing in multiquery
-    //int hidden_dim =  p->hidden_dim;
+    let hidden_dim = p.hidden_dim;
     let head_size = dim / p.n_heads;
 
     // copy the token embedding into x
@@ -682,10 +687,11 @@ fn forward(transformer: &Transformer, token: usize, pos: usize) {
     let content_row = &w.token_embedding_table[token * dim..];
     slicecpy(&mut x[..], &content_row, dim);
 
+    // forward all the layers
     for l in 0..p.n_layers {
         // attention rmsnorm
         //rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
-        rmsnorm(&mut s.xb, &mut x, &w.rms_att_weight[l * dim..], dim);
+        rmsnorm(&mut s.xb, x, &w.rms_att_weight[l * dim..], dim);
         // key and value point to the kv cache
         let loff = l * p.seq_len * kv_dim; // kv cache layer offset for convenience
         //s->k = s->key_cache + loff + pos * kv_dim;
@@ -726,47 +732,105 @@ fn forward(transformer: &Transformer, token: usize, pos: usize) {
             }
         }
         // multihead attention. iterate over all attention heads
-        (s.att).par_iter_mut().enumerate().for_each(|(h, att)| {
-            // h is the ith head, att are the attention scores for this head
-            // get the query vector for this head
-            let q = s.q.slice_at(h * head_size, head_size);
-            // iterate over all timesteps, including the current one
-            (0..(pos + 1)).for_each(|t| {
-                // get the key vector for this head and at this timestep
-                let k = &s.key_cache[loff + t * kv_dim + (h / kv_mul) * head_size..];
-                // calculate the attention score as the dot product of q and k
-                let mut score: f32 = 0.0;
+        (s.att)
+            .par_iter_mut()
+            .zip(s.xb.par_chunks_mut(head_size))
+            .enumerate()
+            .for_each(|(h, (att, xb))| {
+                // h is the ith head, att are the attention scores for this head
+                // get the query vector for this head
+                let q = s.q.slice_at(h * head_size, head_size);
+                // iterate over all timesteps, including the current one
+                (0..(pos + 1)).for_each(|t| {
+                    // get the key vector for this head and at this timestep
+                    let k = &s.key_cache[loff + t * kv_dim + (h / kv_mul) * head_size..];
+                    // calculate the attention score as the dot product of q and k
+                    let mut score: f32 = 0.0;
 
-                for i in 0..head_size {
-                    score += q[i] * k[i];
+                    for i in 0..head_size {
+                        score += q[i] * k[i];
+                    }
+                    score /= (head_size as f32).sqrt();
+                    // save the score to the attention buffer
+                    att[t] = score;
+                });
+
+                // softmax the scores to get attention weights, from 0..pos inclusively
+                softmax(att, pos + 1);
+
+                // weighted sum of the values, store back into xb
+                xb.fill(0.0);
+                for t in 0..pos + 1 {
+                    // get the value vector for this head and at this timestep
+                    let v = &s.value_cache[loff + t * kv_dim + (h / kv_mul) * head_size..];
+                    // get the attention weight for this timestep
+                    let a = att[t];
+                    // accumulate the weighted value into xb
+                    for i in 0..head_size {
+                        xb[i] += a * v[i];
+                    }
                 }
-                score /= (head_size as f32).sqrt();
-                // save the score to the attention buffer
-                att[t] = score;
             });
 
-            // softmax the scores to get attention weights, from 0..pos inclusively
-            softmax(att, pos + 1);
+        // final matmul to get the output of the attention
+        matmul(&mut s.xb2, &s.xb, &w.wo[l * dim * dim..], dim, dim);
 
-            // NOTE xb is per head?, can be Vec<Vec<..>>? Might be easier to write.
-            // // weighted sum of the values, store back into xb
-            let xb = &mut s.xb[h * head_size..];
-            // memset(xb, 0, head_size * sizeof(float));
-            // for (int t = 0; t <= pos; t++) {
-            //     // get the value vector for this head and at this timestep
-            //     float* v = s->value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
-            //     // get the attention weight for this timestep
-            //     float a = att[t];
-            //     // accumulate the weighted value into xb
-            //     for (int i = 0; i < head_size; i++) {
-            //         xb[i] += a * v[i];
-            //     }
-            // }
-        });
-        todo!("HERE");
+        // residual connection back into x
+        for i in 0..dim {
+            x[i] += s.xb2[i];
+        }
+
+        // ffn rmsnorm
+        rmsnorm(&mut s.xb, &x, &w.rms_ffn_weight[l * dim..], dim);
+
+        // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
+        // first calculate self.w1(x) and self.w3(x)
+        matmul(
+            &mut s.hb,
+            &s.xb,
+            &w.w1[l * dim * hidden_dim..],
+            dim,
+            hidden_dim,
+        );
+        matmul(
+            &mut s.hb2,
+            &s.xb,
+            &w.w3[l * dim * hidden_dim..],
+            dim,
+            hidden_dim,
+        );
+
+        // SwiGLU non-linearity
+        for i in 0..hidden_dim {
+            let mut val = s.hb[i];
+            // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
+            val *= 1.0 / (1.0 + (-val).exp());
+            // elementwise multiply with w3(x)
+            val *= s.hb2[i];
+            s.hb[i] = val;
+        }
+        // final matmul to get the output of the ffn
+        matmul(
+            &mut s.xb,
+            &s.hb,
+            &w.w2[l * dim * hidden_dim..],
+            hidden_dim,
+            dim,
+        );
+
+        // residual connection
+        for i in 0..dim {
+            x[i] += s.xb[i];
+        }
     }
 
-    // forward all the layers
+    // final rmsnorm
+    rmsnorm1(x, w.rms_final_weight, dim);
+
+    // classifier into logits
+    //// matmul(s->logits, x, w->wcls, p->dim, p->vocab_size);
+    matmul(&mut s.logits, &x, &w.wcls, p.dim, p.vocab_size);
+    &s.logits
 }
 
 fn rmsnorm(o: &mut [f32], x: &[f32], weight: &[f32], size: usize) {
@@ -781,6 +845,22 @@ fn rmsnorm(o: &mut [f32], x: &[f32], weight: &[f32], size: usize) {
     // normalize and scale
     for j in 0..size {
         o[j] = weight[j] * (ss * x[j]);
+    }
+}
+
+/// A variant of [rmsnorm] where `x` vector and `o` output are the same vectors.
+fn rmsnorm1(x: &mut [f32], weight: &[f32], size: usize) {
+    // calculate sum of squares
+    let mut ss: f32 = 0_f32;
+    for j in 0..size {
+        ss += x[j] * x[j]
+    }
+    ss /= size as f32;
+    ss += 1e-5;
+    ss = 1.0_f32 / ss.sqrt();
+    // normalize and scale
+    for j in 0..size {
+        x[j] = weight[j] * (ss * x[j]);
     }
 }
 
