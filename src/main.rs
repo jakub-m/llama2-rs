@@ -2,6 +2,7 @@ use clap::Parser;
 use memmap2::{Mmap, MmapOptions};
 use rayon::prelude::*;
 use std::{
+    cmp::Ordering,
     f32,
     fs::{File, metadata},
     io::{BufReader, Read},
@@ -529,7 +530,7 @@ struct Sampler {
     probindex: Vec<ProbIndex>,
     temperature: f32,
     topp: f32,
-    rng_state: u128,
+    rng_state: Rand,
 }
 
 /// struct used when sorting probabilities during top-p sampling
@@ -539,6 +540,18 @@ struct ProbIndex {
     index: usize,
 }
 
+impl ProbIndex {
+    fn sort_compare(a: &Self, b: &Self) -> Ordering {
+        if a.prob > b.prob {
+            Ordering::Less
+        } else if a.prob < b.prob {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }
+    }
+}
+
 impl Sampler {
     fn new(vocab_size: usize, temperature: f32, topp: f32, rng_seed: u128) -> Self {
         // void build_sampler(Sampler* sampler, int vocab_size, float temperature, float topp, unsigned long long rng_seed)
@@ -546,10 +559,113 @@ impl Sampler {
             vocab_size,
             temperature,
             topp,
-            rng_state: rng_seed,
+            rng_state: Rand(rng_seed),
             // buffer only used with nucleus sampling; may not need but it's ~small
             probindex: vec![ProbIndex::default(); vocab_size],
         }
+    }
+
+    /// sample the token given the logits and some hyperparameters
+    fn sample(&mut self, logits: &mut [f32]) -> usize {
+        let next: usize;
+        // int next;
+        if self.temperature == 0.0 {
+            // greedy argmax sampling: take the token with the highest probability
+            next = self.sample_argmax(logits);
+        } else {
+            // apply the temperature to the logits
+            logits
+                .iter_mut()
+                .for_each(|logit| *logit = *logit / self.temperature);
+
+            // apply softmax to the logits to get the probabilities for next token
+            softmax(logits, self.vocab_size);
+
+            // flip a (float) coin (this is our source of entropy for sampling)
+            let coin = self.rng_state.random_f32();
+            // we sample from this distribution to get the next token
+            if self.topp <= 0.0 || self.topp >= 1.0 {
+                // simply sample from the predicted probability distribution
+                next = self.sample_mult(logits, coin);
+            } else {
+                // top-p (nucleus) sampling, clamping the least likely tokens to zero
+                next = self.sample_topp(logits, coin);
+            }
+        }
+        next
+    }
+
+    /// return the index that has the highest probability
+    fn sample_argmax(&self, probabilities: &[f32]) -> usize {
+        let mut probabilities = probabilities.iter().copied().enumerate();
+        let (mut max_i, mut max_p) = probabilities.next().unwrap();
+
+        for (i, p) in probabilities {
+            if p > max_p {
+                max_p = p;
+                max_i = i;
+            }
+        }
+        max_i
+    }
+
+    /// sample index from probabilities (they must sum to 1!)
+    /// coin is a random number in [0, 1), usually from random_f32()
+    fn sample_mult(&self, probabilities: &[f32], coin: f32) -> usize {
+        let mut cdf: f32 = 0.0;
+        for (i, p) in probabilities.iter().copied().enumerate() {
+            cdf += p;
+            if coin < cdf {
+                return i;
+            }
+        }
+        probabilities.len() - 1
+    }
+
+    /// top-p sampling (or "nucleus sampling") samples from the smallest set of
+    /// tokens that exceed probability topp. This way we never sample tokens that
+    /// have very low probabilities and are less likely to go "off the rails".
+    /// coin is a random number in [0, 1), usually from random_f32()
+    fn sample_topp(&mut self, probabilities: &[f32], coin: f32) -> usize {
+        let probindex = &mut self.probindex;
+        let n = probabilities.len();
+        let mut n0: usize = 0;
+        let topp = self.topp;
+        // quicksort indices in descending order of probabilities
+        // values smaller than (1 - topp) / (n - 1) cannot be part of the result
+        // so for efficiency we crop these out as candidates before sorting
+        let cutoff: f32 = (1.0 - topp) / ((n - 1) as f32);
+        for (i, p) in probabilities.iter().copied().enumerate() {
+            if p >= cutoff {
+                probindex[n0].index = i;
+                probindex[n0].prob = p;
+                n0 += 1;
+            }
+        }
+
+        probindex[0..n0].sort_unstable_by(ProbIndex::sort_compare);
+
+        // truncate the list where cumulative probability exceeds topp
+        let mut cumulative_prob: f32 = 0.0;
+        let mut last_idx = n0 - 1; // in case of rounding errors consider all elements
+        for i in 0..n0 {
+            cumulative_prob += probindex[i].prob;
+            if cumulative_prob > topp {
+                last_idx = i;
+                break; // we've exceeded topp by including last_idx
+            }
+        }
+
+        // sample from the truncated list
+        let r = coin * cumulative_prob;
+        let mut cdf: f32 = 0.0;
+        for i in 0..(last_idx + 1) {
+            cdf += probindex[i].prob;
+            if r < cdf {
+                return probindex[i].index;
+            }
+        }
+        probindex[last_idx].index // in case of rounding errors
     }
 }
 
@@ -633,26 +749,31 @@ fn generate(
     let prompt_tokens = tokenizer.encode(&prompt, AddBos::Yes, AddEos::No);
     let mut prompt_tokens = prompt_tokens.iter();
     // start the main loop
-    // let mut next = 0_usize;        // will store the next token in the sequence
+    let mut next = 0_usize; // will store the next token in the sequence
     let token = *(prompt_tokens.next().unwrap());
     let mut pos: usize = 0; // position in the sequence
+    let mut run_state = transformer.new_run_state();
     while pos < steps {
+        // forward the transformer to get logits for the next token
+        //let logits = forward(transformer, token, pos);
+        let logits = forward(transformer, &mut run_state, token, pos);
+        // advance the state machine
+
+        next = match prompt_tokens.next() {
+            // if we are still processing the input prompt, force the next prompt token
+            Some(token) => *token,
+            // otherwise sample the next token from the logits
+            None => todo!("sampler missing"), // next = sample(sampler, logits);
+        };
+        pos += 1;
+
+        // data-dependent terminating condition: the BOS (=1) token delimits sequences
+        if next == TOK_BOS {
+            break;
+        }
+
         /*
-           // forward the transformer to get logits for the next token
-           float* logits = forward(transformer, token, pos);
 
-           // advance the state machine
-           if (pos < num_prompt_tokens - 1) {
-               // if we are still processing the input prompt, force the next prompt token
-               next = prompt_tokens[pos + 1];
-           } else {
-               // otherwise sample the next token from the logits
-               next = sample(sampler, logits);
-           }
-           pos++;
-
-           // data-dependent terminating condition: the BOS (=1) token delimits sequences
-           if (next == 1) { break; }
 
            // print the token as string, decode it with the Tokenizer object
            char* piece = decode(tokenizer, token, next);
@@ -980,10 +1101,28 @@ impl<T> SliceAt<T> for Vec<T> {
     }
 }
 
+struct Rand(u128);
+
+impl Rand {
+    fn random_u32(&mut self) -> u32 {
+        let state = &mut self.0;
+        // xorshift rng: https://en.wikipedia.org/wiki/Xorshift#xorshift.2A
+        *state ^= *state >> 12;
+        *state ^= *state << 25;
+        *state ^= *state >> 27;
+        ((*state * 0x2545F4914F6CDD1D) >> 32) as u32
+    }
+
+    /// random float32 in [0,1)
+    fn random_f32(&mut self) -> f32 {
+        (self.random_u32() >> 8) as f32 / 16777216.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::debug_eprintln;
-    use crate::{AddBos, Tokenizer, matmul, rmsnorm, slicecpy};
+    use crate::{AddBos, ProbIndex, Tokenizer, matmul, rmsnorm, slicecpy};
     use std::sync::{LazyLock, Mutex};
 
     // TOKENIZER tries to share the Tokenizer across test cases.
@@ -1094,6 +1233,22 @@ mod tests {
         let s: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         slicecpy(&mut t[..], &s[2..], 3);
         assert_eq!(t, vec![3.0, 4.0, 5.0]);
+    }
+
+    #[test]
+    fn test_probindex_sort() {
+        let mut values: Vec<ProbIndex> = vec![0.3, 0.6, 0.5, 0.4, 0.1, 0.2]
+            .iter()
+            .copied()
+            .map(|prob| ProbIndex { prob, index: 1 })
+            .collect();
+
+        values[0..4].sort_unstable_by(ProbIndex::sort_compare);
+        let actual: Vec<f32> = values.iter().map(|p| p.prob).collect();
+        assert_eq!(
+            actual,
+            vec![0.6, 0.5, 0.4, 0.3, /* sort ends here */ 0.1, 0.2]
+        );
     }
 
     fn assert_encoding(text: &str, expected_tokens: Vec<usize>) {
