@@ -285,6 +285,20 @@ impl Tokenizer {
         tokens
     }
 
+    fn decode(&self, prev_token: usize, token: usize) {
+        // let piece = &self.vocab[token];
+        //    char *piece = t->vocab[token];
+        //    // following BOS (1) token, sentencepiece decoder strips any leading whitespace (see PR #89 https://github.com/karpathy/llama2.c/pull/89)
+        //    if (prev_token == 1 && piece[0] == ' ') { piece++; }
+        //    // careful, some tokens designate raw bytes, and look like e.g. '<0x01>'
+        //    // parse this and convert and return the actual byte
+        //    unsigned char byte_val;
+        //    if (sscanf(piece, "<0x%02hhX>", &byte_val) == 1) {
+        //        piece = (char*)t->byte_pieces + byte_val * 2;
+        //    }
+        //    return piece;
+    }
+
     /// find the perfect match for str in vocab
     fn str_lookup(&self, needle: &str) -> Option<TokenIndex> {
         // int str_lookup(char *str, TokenIndex *sorted_vocab, int vocab_size)
@@ -742,7 +756,7 @@ impl From<ConfigDeser> for Config {
 fn generate(
     transformer: &Transformer,
     tokenizer: &Tokenizer,
-    sampler: &Sampler,
+    sampler: &mut Sampler,
     prompt: String,
     steps: usize,
 ) {
@@ -758,12 +772,11 @@ fn generate(
         //let logits = forward(transformer, token, pos);
         let logits = forward(transformer, &mut run_state, token, pos);
         // advance the state machine
-
         next = match prompt_tokens.next() {
             // if we are still processing the input prompt, force the next prompt token
             Some(token) => *token,
             // otherwise sample the next token from the logits
-            None => todo!("sampler missing"), // next = sample(sampler, logits);
+            None => sampler.sample(logits),
         };
         pos += 1;
 
@@ -792,7 +805,7 @@ fn forward<'a>(
     s: &'a mut RunState,
     token: usize,
     pos: usize,
-) -> &'a [f32] {
+) -> &'a mut [f32] {
     let p = &transformer.config;
     let w = &transformer.weights;
     //let mut s = transformer.new_run_state();
@@ -951,7 +964,7 @@ fn forward<'a>(
     // classifier into logits
     //// matmul(s->logits, x, w->wcls, p->dim, p->vocab_size);
     matmul(&mut s.logits, &x, &w.wcls, p.dim, p.vocab_size);
-    &s.logits
+    &mut s.logits
 }
 
 fn rmsnorm(o: &mut [f32], x: &[f32], weight: &[f32], size: usize) {
@@ -1050,14 +1063,20 @@ fn main() {
     let transformer = Transformer::build(&args.checkpoint_path);
     assert!(args.steps <= transformer.config.seq_len);
     let tokenizer = Tokenizer::build(&args.tokenizer_path, transformer.config.vocab_size);
-    let sampler = Sampler::new(
+    let mut sampler = Sampler::new(
         transformer.config.vocab_size,
         args.temperature,
         args.topp,
         args.rng_seed,
     );
 
-    generate(&transformer, &tokenizer, &sampler, args.prompt, args.steps);
+    generate(
+        &transformer,
+        &tokenizer,
+        &mut sampler,
+        args.prompt,
+        args.steps,
+    );
 }
 
 #[derive(Parser, Debug)]
