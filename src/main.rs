@@ -1060,6 +1060,7 @@ fn matmul(xout: &mut [f32], x: &[f32], w: &[f32], n: usize, d: usize) {
 //    );
 //}
 
+/// - n_t - number of elements to copy from source to target.
 fn slicecpy<T: Clone>(target: &mut [T], source: &[T], n_t: usize) {
     target[..n_t].clone_from_slice(&source[..n_t]);
 }

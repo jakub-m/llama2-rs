@@ -8,6 +8,7 @@ To run tests you need `tokenizer.bin` from the [original repo][1].
 # Learnings
 
 - Using Rust-ish type (like `TokenId` instead of `usize`) helps understanding the code.
+- ChatGPT was _very useful_ in learning `lldb` commands.
 
 # Materials
 - [From Multi-Head to Latent Attention: The Evolution of Attention Mechanisms](https://vinithavn.medium.com/from-multi-head-to-latent-attention-the-evolution-of-attention-mechanisms-64e3c0505f24)
