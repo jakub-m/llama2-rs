@@ -285,18 +285,32 @@ impl Tokenizer {
         tokens
     }
 
-    fn decode(&self, prev_token: usize, token: usize) {
-        // let piece = &self.vocab[token];
+    fn decode(&self, prev_token: TokenId, token: TokenId) -> String {
+        let piece = &self.get_vocab_for(token);
+        let mut piece = piece.as_str();
         //    char *piece = t->vocab[token];
-        //    // following BOS (1) token, sentencepiece decoder strips any leading whitespace (see PR #89 https://github.com/karpathy/llama2.c/pull/89)
-        //    if (prev_token == 1 && piece[0] == ' ') { piece++; }
-        //    // careful, some tokens designate raw bytes, and look like e.g. '<0x01>'
-        //    // parse this and convert and return the actual byte
+        // following BOS (1) token, sentencepiece decoder strips any leading whitespace (see PR #89 https://github.com/karpathy/llama2.c/pull/89)
+        if prev_token == TOK_BOS && piece.starts_with(' ') {
+            //    if (prev_token == 1 && piece[0] == ' ') { piece++; }
+            piece = &piece[1..]
+        }
+
+        // careful, some tokens designate raw bytes, and look like e.g. '<0x01>'
+        // parse this and convert and return the actual byte
         //    unsigned char byte_val;
         //    if (sscanf(piece, "<0x%02hhX>", &byte_val) == 1) {
         //        piece = (char*)t->byte_pieces + byte_val * 2;
         //    }
         //    return piece;
+        if let Some(hex) = piece.strip_prefix("<0x").and_then(|s| s.strip_suffix('>')) {
+            if hex.len() == 2 {
+                let byte_val = u8::from_str_radix(hex, 16).ok().unwrap();
+                let piece = String::clone(&self.byte_pieces[byte_val as usize]);
+                return piece;
+            }
+        }
+
+        piece.to_owned()
     }
 
     /// find the perfect match for str in vocab
@@ -547,7 +561,7 @@ fn memory_map_weights<'a>(
 /// The Sampler, which takes logits and returns a sampled token
 /// sampling can be done in a few ways: greedy argmax, sampling, top-p sampling
 struct Sampler {
-    vocab_size: usize,
+    // vocab_size: usize,
     /// buffer used in top-p sampling
     probindex: Vec<ProbIndex>,
     temperature: f32,
@@ -578,7 +592,6 @@ impl Sampler {
     fn new(vocab_size: usize, temperature: f32, topp: f32, rng_seed: u128) -> Self {
         // void build_sampler(Sampler* sampler, int vocab_size, float temperature, float topp, unsigned long long rng_seed)
         Sampler {
-            vocab_size,
             temperature,
             topp,
             rng_state: Rand(rng_seed),
@@ -589,6 +602,7 @@ impl Sampler {
 
     /// sample the token given the logits and some hyperparameters
     fn sample(&mut self, logits: &mut [f32]) -> usize {
+        let vocab_size = logits.len(); // assumption, asserted on the caller side.
         let next: usize;
         // int next;
         if self.temperature == 0.0 {
@@ -601,7 +615,7 @@ impl Sampler {
                 .for_each(|logit| *logit = *logit / self.temperature);
 
             // apply softmax to the logits to get the probabilities for next token
-            softmax(logits, self.vocab_size);
+            softmax(logits, vocab_size);
 
             // flip a (float) coin (this is our source of entropy for sampling)
             let coin = self.rng_state.random_f32();
@@ -771,20 +785,28 @@ fn generate(
     let prompt_tokens = tokenizer.encode(&prompt, AddBos::Yes, AddEos::No);
     let mut prompt_tokens = prompt_tokens.iter();
     // start the main loop
-    let mut next = 0_usize; // will store the next token in the sequence
-    let token = *(prompt_tokens.next().unwrap());
+    let mut next = TokenId(0); // will store the next token in the sequence
+    let mut token = *(prompt_tokens.next().unwrap());
     let mut pos: usize = 0; // position in the sequence
     let mut run_state = transformer.new_run_state();
     while pos < steps {
         // forward the transformer to get logits for the next token
         //let logits = forward(transformer, token, pos);
         let logits = forward(transformer, &mut run_state, token, pos);
+        assert_eq!(
+            logits.len(),
+            tokenizer.vocab_size,
+            "sample assumes that logits len == tokenizer.vocab_size, pass vocab size if this is not true"
+        );
         // advance the state machine
         next = match prompt_tokens.next() {
             // if we are still processing the input prompt, force the next prompt token
             Some(token) => *token,
             // otherwise sample the next token from the logits
-            None => sampler.sample(logits),
+            None => {
+                let i = sampler.sample(logits);
+                TokenId(i)
+            }
         };
         pos += 1;
 
@@ -793,16 +815,10 @@ fn generate(
             break;
         }
 
-        /*
-
-
-           // print the token as string, decode it with the Tokenizer object
-           char* piece = decode(tokenizer, token, next);
-           safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
-           fflush(stdout);
-           token = next;
-        */
-        todo!("HERE")
+        // print the token as string, decode it with the Tokenizer object
+        let piece = tokenizer.decode(token, next);
+        print!("{}", piece);
+        token = next;
     }
     // TODO report achieved tok/s (pos-1 because the timer starts after first iteration)
 }
@@ -811,7 +827,7 @@ fn generate(
 fn forward<'a>(
     transformer: &Transformer,
     s: &'a mut RunState,
-    token: usize,
+    token: TokenId,
     pos: usize,
 ) -> &'a mut [f32] {
     let p = &transformer.config;
@@ -826,7 +842,7 @@ fn forward<'a>(
 
     // copy the token embedding into x
     //float* content_row = w->token_embedding_table + token * dim;
-    let content_row = &w.token_embedding_table[token * dim..];
+    let content_row = &w.token_embedding_table[token.as_raw() * dim..];
     slicecpy(&mut x[..], &content_row, dim);
 
     // forward all the layers
@@ -1063,7 +1079,7 @@ enum AddEos {
 }
 
 /// TokenId is the position of the token in vocab vector.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 struct TokenId(usize);
 
 impl TokenId {
@@ -1159,7 +1175,7 @@ impl Rand {
 #[cfg(test)]
 mod tests {
     use super::debug_eprintln;
-    use crate::{AddBos, ProbIndex, Tokenizer, matmul, rmsnorm, slicecpy};
+    use crate::{AddBos, ProbIndex, TokenId, Tokenizer, matmul, rmsnorm, slicecpy};
     use std::sync::{LazyLock, Mutex};
 
     // TOKENIZER tries to share the Tokenizer across test cases.
@@ -1292,6 +1308,7 @@ mod tests {
         TOKENIZER.with(|tokenizer| {
             let tokenizer = tokenizer.lock().unwrap();
             let actual = tokenizer.encode(text, AddBos::Yes, crate::AddEos::No);
+            let actual: Vec<usize> = actual.into_iter().map(|t| t.as_raw()).collect();
             assert_eq!(
                 actual,
                 expected_tokens,

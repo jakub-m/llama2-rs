@@ -4,6 +4,11 @@ To run tests you need `tokenizer.bin` from the [original repo][1].
 
 [1]: https://github.com/karpathy/llama2.c
 
+
+# Learnings
+
+- Using Rust-ish type (like `TokenId` instead of `usize`) helps understanding the code.
+
 # Materials
 - [From Multi-Head to Latent Attention: The Evolution of Attention Mechanisms](https://vinithavn.medium.com/from-multi-head-to-latent-attention-the-evolution-of-attention-mechanisms-64e3c0505f24)
 - [Positional Embeddings in Transformers: A Math Guide to RoPE & ALiBi](https://towardsdatascience.com/positional-embeddings-in-transformers-a-math-guide-to-rope-alibi/)
