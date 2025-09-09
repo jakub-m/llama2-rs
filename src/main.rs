@@ -344,7 +344,9 @@ struct Transformer<'a> {
     //    float* data; // memory mapped data pointer
     //    ssize_t file_size; // size of the checkpoint file in bytes
     /// the mmap-ed file with weights.
-    file: File,
+    _file: File,
+    // Keep mmap valid, otherwise mmap would be dropped and we'd get a segfault.
+    _mmap: Mmap,
 }
 
 struct TransformerWeights<'a> {
@@ -376,7 +378,8 @@ impl<'a> Transformer<'a> {
         Transformer {
             config,
             weights: checkpoint.transformer_weights,
-            file: checkpoint.file,
+            _file: checkpoint.file,
+            _mmap: checkpoint.mmap,
         }
     }
 
@@ -401,20 +404,23 @@ impl<'a> Transformer<'a> {
 
         // memory map the Transformer weights into the data pointer
         let file = File::open(checkpoint_path).unwrap();
-        let data = unsafe {
+        let data_mmap = unsafe {
             MmapOptions::new().map_copy_read_only(&file).unwrap() // open in read only mode, equivalent of mmap PROT_READ, MAP_PRIVATE
         };
 
         let data: &[f32] = unsafe {
-            std::slice::from_raw_parts(data.as_ptr() as *const f32, data.len() / size_of::<f32>())
+            std::slice::from_raw_parts(
+                data_mmap.as_ptr() as *const f32,
+                data_mmap.len() / size_of::<f32>(),
+            )
         };
-
         let data = &data[size_of::<ConfigDeser>() / size_of::<f32>()..];
         let transformer_weights = memory_map_weights(&config, data, shared_weights);
         (
             config,
             Checkpoint {
                 file,
+                mmap: data_mmap,
                 transformer_weights,
             },
         )
@@ -486,6 +492,7 @@ impl RunState {
 /// A helper to return mmap-ed memory and the mmap-ed file.
 struct Checkpoint<'a> {
     file: File,
+    mmap: Mmap,
     transformer_weights: TransformerWeights<'a>,
 }
 
@@ -497,6 +504,7 @@ fn memory_map_weights<'a>(
     let head_size = p.dim / p.n_heads;
     // make sure the multiplications below are done in 64bit to fit the parameter counts of 13B+ models
     let token_embedding_table = ptr; // (vocab_size, dim)
+    debug_eprintln!("ptr {}", token_embedding_table[1000]);
     let ptr: &[f32] = &ptr[(p.vocab_size * p.dim)..];
 
     // weights for rmsnorms
@@ -842,7 +850,19 @@ fn forward<'a>(
 
     // copy the token embedding into x
     //float* content_row = w->token_embedding_table + token * dim;
+    debug_eprintln!("start token_embedding_table");
+    for i in 0..1000 {
+        debug_eprintln!(
+            "token_embedding_table[{}]={}",
+            i,
+            w.token_embedding_table[i]
+        )
+    }
     let content_row = &w.token_embedding_table[token.as_raw() * dim..];
+    debug_eprintln!("start content row");
+    for i in 0..1000 {
+        debug_eprintln!("content_row[{}]={}", i, content_row[i])
+    }
     slicecpy(&mut x[..], &content_row, dim);
 
     // forward all the layers
