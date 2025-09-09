@@ -51,7 +51,7 @@ struct TokenIndex {
     /// Refernce to string in [Tokenizer::vocab] vector.
     token_str: Rc<String>,
     /// position in [Tokenizer::vocab] vector.
-    id: usize,
+    id: TokenId,
 }
 
 struct Tokenizer {
@@ -66,9 +66,9 @@ struct Tokenizer {
     byte_pieces: [Box<String>; 256],
 }
 
-const TOK_UNK: usize = 0;
-const TOK_BOS: usize = 1;
-const TOK_EOS: usize = 2;
+const TOK_UNK: TokenId = TokenId(0);
+const TOK_BOS: TokenId = TokenId(1);
+const TOK_EOS: TokenId = TokenId(2);
 
 impl Tokenizer {
     fn build(path: &str, vocab_size: usize) -> Tokenizer {
@@ -102,17 +102,17 @@ impl Tokenizer {
         }
 
         assert_eq!(
-            vocab.get(TOK_UNK).unwrap().as_str(),
+            vocab.get(TOK_UNK.as_raw()).unwrap().as_str(),
             "<unk>",
             "expected UNK token"
         );
         assert_eq!(
-            vocab.get(TOK_BOS).unwrap().as_str(),
+            vocab.get(TOK_BOS.as_raw()).unwrap().as_str(),
             "\n<s>\n",
             "expected BOS token"
         );
         assert_eq!(
-            vocab.get(TOK_EOS).unwrap().as_str(),
+            vocab.get(TOK_EOS.as_raw()).unwrap().as_str(),
             "\n</s>\n",
             "expected EOS token"
         );
@@ -120,7 +120,7 @@ impl Tokenizer {
         let mut sorted_vocab: Vec<TokenIndex> = (0..vocab_size)
             .map(|id| TokenIndex {
                 token_str: Rc::clone(&vocab[id]),
-                id,
+                id: TokenId(id),
             })
             .collect();
         sorted_vocab.sort_by(|a, b| a.token_str.partial_cmp(&b.token_str).unwrap());
@@ -141,12 +141,12 @@ impl Tokenizer {
 
     /// encode the string text (input) into an upper-bound preallocated tokens[] array
     /// bos != 0 means prepend the BOS token (=1), eos != 0 means append the EOS token (=2)
-    fn encode(&self, text: &str, add_bos: AddBos, add_eos: AddEos) -> Vec<usize> {
+    fn encode(&self, text: &str, add_bos: AddBos, add_eos: AddEos) -> Vec<TokenId> {
         // void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *n_tokens)
 
         // First, encode codepoint by codepoint, later merge succesive encoded tokens using the "best"
         // match.
-        let mut tokens: Vec<usize> = Vec::with_capacity(text.len() + 3); // max. possible capacity, +3 for '\0', ?BOS, ?EOS
+        let mut tokens: Vec<TokenId> = Vec::with_capacity(text.len() + 3); // max. possible capacity, +3 for '\0', ?BOS, ?EOS
 
         if let AddBos::Yes = add_bos {
             tokens.push(TOK_BOS)
@@ -183,7 +183,7 @@ impl Tokenizer {
                     for b in s.as_bytes() {
                         let i = ((*b + 3) as usize);
                         debug_eprint!(" {b:#x} {i}");
-                        tokens.push(i)
+                        tokens.push(TokenId(i))
                     }
                     #[cfg(feature = "debug-encoder")]
                     debug_eprintln!("");
@@ -196,18 +196,18 @@ impl Tokenizer {
             s: String,
             /// Token at this idx will be replaced with tok_id.
             tok_idx: usize,
-            tok_id: usize,
+            tok_id: TokenId,
             score: f32,
         }
 
         let mut curr_best: Option<Best> = None;
         loop {
-            for tok_idx in (0..tokens.len() - 1) {
-                let str0 = self.vocab.get(*tokens.get(tok_idx + 0).unwrap()).unwrap();
-                let str1 = self.vocab.get(*tokens.get(tok_idx + 1).unwrap()).unwrap();
+            for tok_idx in 0..tokens.len() - 1 {
+                let str0 = self.get_vocab_for(*tokens.get(tok_idx + 0).unwrap());
+                let str1 = self.get_vocab_for(*tokens.get(tok_idx + 1).unwrap());
                 let candidate_str = format!("{}{}", str0, str1);
                 if let Some(found) = self.str_lookup(&candidate_str) {
-                    let candidate_score = *(self.vocab_scores.get(found.id).unwrap());
+                    let candidate_score = self.get_vocab_score_for(found.id);
                     if let Some(best) = &curr_best {
                         if candidate_score > best.score {
                             curr_best = Some(Best {
@@ -307,6 +307,14 @@ impl Tokenizer {
             .binary_search_by(|probe| probe.token_str.as_str().cmp(needle))
             .ok()?;
         Some(self.sorted_vocab.get(i_found).unwrap().clone())
+    }
+
+    fn get_vocab_for(&self, token_id: TokenId) -> Rc<String> {
+        self.vocab.get(token_id.as_raw()).unwrap().clone()
+    }
+
+    fn get_vocab_score_for(&self, token_id: TokenId) -> f32 {
+        *self.vocab_scores.get(token_id.as_raw()).unwrap()
     }
 }
 
@@ -1052,6 +1060,16 @@ enum AddBos {
 enum AddEos {
     No,
     Yes,
+}
+
+/// TokenId is the position of the token in vocab vector.
+#[derive(Debug, Copy, Clone)]
+struct TokenId(usize);
+
+impl TokenId {
+    fn as_raw(&self) -> usize {
+        self.0
+    }
 }
 
 fn main() {
