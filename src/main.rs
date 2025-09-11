@@ -498,55 +498,47 @@ struct Checkpoint<'a> {
 
 fn memory_map_weights<'a>(
     p: &Config,
-    ptr: &'a [f32],
+    base: &'a [f32],
     shared_weights: bool,
 ) -> TransformerWeights<'a> {
     let head_size = p.dim / p.n_heads;
     // make sure the multiplications below are done in 64bit to fit the parameter counts of 13B+ models
-    let token_embedding_table = ptr; // (vocab_size, dim)
-    let ptr: &[f32] = &ptr[(p.vocab_size * p.dim)..];
-
+    let n_layers = p.n_layers;
+    let mut ptr: usize = 0; // keep the name as in the original c code
+    //
+    let token_embedding_table = &base[ptr..];
+    ptr += p.vocab_size * p.dim;
     // weights for rmsnorms
-    let rms_att_weight = ptr; // (layer, dim) rmsnorm weights
-    let ptr: &[f32] = &ptr[(p.n_layers * p.dim)..];
-
+    let rms_att_weight = &base[ptr..];
+    ptr += n_layers * p.dim;
     // weights for matmuls. note dim == n_heads * head_size
-    let wq = ptr; // (layer, dim, n_heads * head_size)
-    let ptr: &[f32] = &ptr[(p.n_layers * p.dim * (p.n_heads * head_size))..];
-
-    let wk = ptr; // (layer, dim, n_kv_heads * head_size)
-    let ptr: &[f32] = &ptr[(p.n_layers * p.dim * (p.n_kv_heads * head_size))..];
-
-    let wv = ptr; //  (layer, dim, n_kv_heads * head_size)
-    let ptr: &[f32] = &ptr[(p.n_layers * p.dim * (p.n_kv_heads * head_size))..];
-
-    let wo = ptr; // (layer, n_heads * head_size, dim)
-    let ptr: &[f32] = &ptr[(p.n_layers * (p.n_heads * head_size) * p.dim)..];
-
-    let rms_ffn_weight = ptr;
-    let ptr: &[f32] = &ptr[(p.n_layers * p.dim)..];
-
-    // weights for ffn
-    let w1 = ptr; // (layer, hidden_dim, dim)
-    let ptr: &[f32] = &ptr[(p.n_layers * p.dim * p.hidden_dim)..];
-
-    let w2 = ptr; // (layer, dim, hidden_dim);
-    let ptr: &[f32] = &ptr[(p.n_layers * p.hidden_dim * p.dim)..];
-
-    let w3 = ptr; // (layer, hidden_dim, dim)
-    let ptr: &[f32] = &ptr[(p.n_layers * p.dim * p.hidden_dim)..];
-
+    let wq = &base[ptr..];
+    ptr += n_layers * p.dim * (p.n_heads * head_size);
+    let wk = &base[ptr..];
+    ptr += n_layers * p.dim * (p.n_kv_heads * head_size);
+    let wv = &base[ptr..];
+    ptr += n_layers * p.dim * (p.n_kv_heads * head_size);
+    let wo = &base[ptr..];
+    ptr += n_layers * (p.n_heads * head_size) * p.dim;
+    let rms_ffn_weight = &base[ptr..];
+    ptr += n_layers * p.dim;
+    //// weights for ffn
+    let w1 = &base[ptr..];
+    ptr += n_layers * p.dim * p.hidden_dim;
+    let w2 = &base[ptr..];
+    ptr += n_layers * p.hidden_dim * p.dim;
+    let w3 = &base[ptr..];
+    ptr += n_layers * p.dim * p.hidden_dim;
     // final rmsnorm
-    let rms_final_weight = ptr; // (dim,)
-    let ptr: &[f32] = &ptr[(p.dim)..];
-    let ptr: &[f32] = &ptr[(p.seq_len * head_size / 2)..]; // skip what used to be freq_cis_real (for RoPE)
-    let ptr: &[f32] = &ptr[(p.seq_len * head_size / 2)..]; // skip what used to be freq_cis_imag (for RoPE)
-
+    let rms_final_weight = &base[ptr..];
+    ptr += p.dim;
+    ptr += p.seq_len * head_size / 2; // skip what used to be freq_cis_real (for RoPE)
+    ptr += p.seq_len * head_size / 2; // skip what used to be freq_cis_imag (for RoPE)
     // (optional) classifier weights for the logits, on the last layer
-    let wcls: &[f32] = if shared_weights {
+    let wcls = if shared_weights {
         token_embedding_table
     } else {
-        ptr
+        &base[ptr..]
     };
 
     TransformerWeights {
