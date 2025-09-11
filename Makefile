@@ -5,7 +5,7 @@ build:
 	cargo build --features debug
 
 run: build
-	$(debug_target) -z ../llama2.c/tokenizer.bin  ../llama2.c/stories15M.bin  -i '$(prompt)'
+	RAYON_NUM_THREADS=1 RUST_BACKTRACE=1 $(debug_target) -z ../llama2.c/tokenizer.bin  ../llama2.c/stories15M.bin  -i '$(prompt)'
 
 debug: build
 	lldb $(debug_target) -- -z ../llama2.c/tokenizer.bin  ../llama2.c/stories15M.bin  -i '$(prompt)'

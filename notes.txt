@@ -1,0 +1,51 @@
+frame #2: 0x0000000100007bd0 llama2-rs`llama2_rs::matmul::_$u7b$$u7b$closure$u7d$$u7d$::h4f4f0f8a41a59587((null)=(usize, &mut f32) @ 0x000000016fdfc868) at main.rs:1055:20
+   1052         let mut val: f32 = 0.0;
+   1053         for j in 0..n {
+   1054             // debug_eprintln!("try i={i} n={n} j={j}");
+-> 1055             val += w[i * n + j] * x[j];
+   1056             // debug_eprintln!("good i={i} n={n} j={j}");
+   1057         }
+   1058         *xout_val = val;
+(lldb) var
+((usize, &mut f32))  = {
+  __0 = 19057
+  __1 = 0x000000016017a9c4
+}
+(unsigned long) n = 288
+(float) w = 0.021850083
+(float) x = -0.577489913
+(unsigned long) i = 19057
+(float *) xout_val = 0x000000016017a9c4
+(float) val = -5.17649412
+(core::ops::range::Range<unsigned long>) iter = (start = 193, end = 288)
+(unsigned long) j = 192
+
+---
+
+(lldb) e -- i * n + j
+(unsigned long) $6 = 5488608
+(lldb) v i n j
+(unsigned long) i = 19057
+(unsigned long) n = 288
+(unsigned long) j = 192
+
+---
+
+
+frame #8: 0x00000001000170b4 llama2-rs`llama2_rs::matmul::h3bfc77c7d2ed0954(xout=&mut [f32] @ 0x000000016fdfcb18, x=&[f32] @ 0x000000016fdfcb28, w=&[f32] @ 0x000000016fdfcb38, n=288, d=288) at main.rs:1051:5
+
+---
+frame 9
+
+-> 870          matmul(s_k, &s.xb, &w.wk[l * dim * kv_dim..], dim, kv_dim); // s_k = wk(l) @ xb
+                                   ^^^^^(unsigned long) l = 0
+                                   ^^^^^(unsigned long) dim = 288
+                                   ^^^^^(unsigned long) kv_dim = 288
+                                   e -- dim * kv_dim = 82944
+                                   w->wk.length = 5488608
+
+-------
+index out of bounds: the len is 5488608 but the index is 5488608
+
+----
+ConfigDeser { dim: 288, hidden_dim: 768, n_layers: 6, n_heads: 6, n_kv_heads: 6, vocab_size: 32000, seq_len: 256 }

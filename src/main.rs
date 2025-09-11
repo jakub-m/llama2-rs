@@ -504,7 +504,6 @@ fn memory_map_weights<'a>(
     let head_size = p.dim / p.n_heads;
     // make sure the multiplications below are done in 64bit to fit the parameter counts of 13B+ models
     let token_embedding_table = ptr; // (vocab_size, dim)
-    debug_eprintln!("ptr {}", token_embedding_table[1000]);
     let ptr: &[f32] = &ptr[(p.vocab_size * p.dim)..];
 
     // weights for rmsnorms
@@ -850,19 +849,7 @@ fn forward<'a>(
 
     // copy the token embedding into x
     //float* content_row = w->token_embedding_table + token * dim;
-    debug_eprintln!("start token_embedding_table");
-    for i in 0..1000 {
-        debug_eprintln!(
-            "token_embedding_table[{}]={}",
-            i,
-            w.token_embedding_table[i]
-        )
-    }
     let content_row = &w.token_embedding_table[token.as_raw() * dim..];
-    debug_eprintln!("start content row");
-    for i in 0..1000 {
-        debug_eprintln!("content_row[{}]={}", i, content_row[i])
-    }
     slicecpy(&mut x[..], &content_row, dim);
 
     // forward all the layers
@@ -1060,10 +1047,13 @@ fn softmax(x: &mut [f32], size: usize) {
 /// W (d,n) @ x (n,) -> xout (d,)
 /// by far the most amount of time is spent inside this little function
 fn matmul(xout: &mut [f32], x: &[f32], w: &[f32], n: usize, d: usize) {
-    xout.par_iter_mut().enumerate().for_each(|(i, xout_val)| {
+    //xout.par_iter_mut().enumerate().for_each(|(i, xout_val)| {
+    xout.iter_mut().enumerate().for_each(|(i, xout_val)| {
         let mut val: f32 = 0.0;
         for j in 0..n {
+            // debug_eprintln!("try i={i} n={n} j={j}");
             val += w[i * n + j] * x[j];
+            // debug_eprintln!("good i={i} n={n} j={j}");
         }
         *xout_val = val;
     });
