@@ -1182,7 +1182,7 @@ impl Rand {
         *state ^= *state >> 12;
         *state ^= *state << 25;
         *state ^= *state >> 27;
-        ((*state * 0x2545F4914F6CDD1D) >> 32) as u32
+        (((*state).wrapping_mul(0x2545F4914F6CDD1D)) >> 32) as u32
     }
 
     /// random float32 in [0,1)
