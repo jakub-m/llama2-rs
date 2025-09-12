@@ -504,44 +504,38 @@ fn memory_map_weights<'a>(
     let head_size = p.dim / p.n_heads;
     // make sure the multiplications below are done in 64bit to fit the parameter counts of 13B+ models
     let n_layers = p.n_layers;
-    let mut ptr: usize = 0; // keep the name as in the original c code
+    let mut ptr = base;
 
-    let token_embedding_table = &base[ptr..];
-    ptr += p.vocab_size * p.dim;
+    // using advance_slice allows setting sub-slices with proper lengths, for better boundary
+    // checks (and earlier panic).
+    let token_embedding_table = advance_slice(&mut ptr, p.vocab_size * p.dim);
+
     // weights for rmsnorms
-    let rms_att_weight = &base[ptr..];
-    ptr += n_layers * p.dim;
-
-    // rms_att_weight = advance_slice(&mut ptr, n_layers * p.dim);
+    let rms_att_weight = advance_slice(&mut ptr, n_layers * p.dim);
 
     // weights for matmuls. note dim == n_heads * head_size
-    let wq = &base[ptr..];
-    ptr += n_layers * p.dim * (p.n_heads * head_size);
-    let wk = &base[ptr..];
-    ptr += n_layers * p.dim * (p.n_kv_heads * head_size);
-    let wv = &base[ptr..];
-    ptr += n_layers * p.dim * (p.n_kv_heads * head_size);
-    let wo = &base[ptr..];
-    ptr += n_layers * (p.n_heads * head_size) * p.dim;
-    let rms_ffn_weight = &base[ptr..];
-    ptr += n_layers * p.dim;
-    //// weights for ffn
-    let w1 = &base[ptr..];
-    ptr += n_layers * p.dim * p.hidden_dim;
-    let w2 = &base[ptr..];
-    ptr += n_layers * p.hidden_dim * p.dim;
-    let w3 = &base[ptr..];
-    ptr += n_layers * p.dim * p.hidden_dim;
+    let wq = advance_slice(&mut ptr, n_layers * p.dim * (p.n_heads * head_size));
+    let wk = advance_slice(&mut ptr, n_layers * p.dim * (p.n_kv_heads * head_size));
+    let wv = advance_slice(&mut ptr, n_layers * p.dim * (p.n_kv_heads * head_size));
+    let wo = advance_slice(&mut ptr, n_layers * (p.n_heads * head_size) * p.dim);
+    let rms_ffn_weight = advance_slice(&mut ptr, n_layers * p.dim);
+    // weights for ffn
+    let w1 = advance_slice(&mut ptr, n_layers * p.dim * p.hidden_dim);
+    let w2 = advance_slice(&mut ptr, n_layers * p.hidden_dim * p.dim);
+    let w3 = advance_slice(&mut ptr, n_layers * p.dim * p.hidden_dim);
     // final rmsnorm
-    let rms_final_weight = &base[ptr..];
-    ptr += p.dim;
-    ptr += p.seq_len * head_size / 2; // skip what used to be freq_cis_real (for RoPE)
-    ptr += p.seq_len * head_size / 2; // skip what used to be freq_cis_imag (for RoPE)
+    let rms_final_weight = advance_slice(&mut ptr, p.dim);
+
+    let k = 0
+        + p.seq_len * head_size / 2 // skip what used to be freq_cis_real (for RoPE)
+        + p.seq_len * head_size / 2; // skip what used to be freq_cis_imag (for RoPE)
+    ptr = &ptr[k..];
+
     // (optional) classifier weights for the logits, on the last layer
     let wcls = if shared_weights {
         token_embedding_table
     } else {
-        &base[ptr..]
+        ptr
     };
 
     TransformerWeights {
