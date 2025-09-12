@@ -857,10 +857,11 @@ fn forward<'a>(
         // key and value point to the kv cache
         let loff = l * p.seq_len * kv_dim; // kv cache layer offset for convenience
         //s->k = s->key_cache + loff + pos * kv_dim;
-        let s_k = &mut s.key_cache[loff + pos * kv_dim..];
+        let s_k = s.key_cache.slice_at_mut(loff + pos * kv_dim, kv_dim);
+
         //s->v = s->value_cache + loff + pos * kv_dim;
-        let s_v = &mut s.value_cache[loff + pos * kv_dim..];
-        //
+        let s_v = s.value_cache.slice_at_mut(loff + pos * kv_dim, kv_dim);
+
         // qkv matmuls for this position
         matmul(&mut s.q, &s.xb, &w.wq[l * dim * dim..], dim, dim); // s.q = wq(l) @ xb
         // matmul(s->k, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
@@ -1043,15 +1044,20 @@ fn softmax(x: &mut [f32], size: usize) {
 
 /// W (d,n) @ x (n,) -> xout (d,)
 /// by far the most amount of time is spent inside this little function
+/// Here d is used only for extra boundary checks, xout slice should have the correct length.
 fn matmul(xout: &mut [f32], x: &[f32], w: &[f32], n: usize, d: usize) {
-    // HERE matmul wrong
-    //xout.par_iter_mut().enumerate().for_each(|(i, xout_val)| {
-    xout.iter_mut().enumerate().for_each(|(i, xout_val)| {
+    assert_eq!(
+        xout.len(),
+        d,
+        "expected different size of the slice. xout.len()={}, expected d={}",
+        xout.len(),
+        d
+    );
+    xout.par_iter_mut().enumerate().for_each(|(k, xout_val)| {
+        //xout.iter_mut().enumerate().for_each(|(k, xout_val)| { // serial
         let mut val: f32 = 0.0;
-        for j in 0..n {
-            // debug_eprintln!("try i={i} n={n} j={j}");
-            val += w[i * n + j] * x[j];
-            // debug_eprintln!("good i={i} n={n} j={j}");
+        for i in 0..n {
+            val += w[k * n + i] * x[i];
         }
         *xout_val = val;
     });
@@ -1155,11 +1161,15 @@ fn default_seed() -> u128 {
 /// A helper trait for getting the slices at position, with length.
 trait SliceAt<T> {
     fn slice_at(&self, start: usize, len: usize) -> &[T];
+    fn slice_at_mut(&mut self, start: usize, len: usize) -> &mut [T];
 }
 
 impl<T> SliceAt<T> for Vec<T> {
     fn slice_at(&self, start: usize, len: usize) -> &[T] {
         &self[start..start + len]
+    }
+    fn slice_at_mut(&mut self, start: usize, len: usize) -> &mut [T] {
+        &mut self[start..start + len]
     }
 }
 
