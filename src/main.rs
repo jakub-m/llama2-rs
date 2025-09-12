@@ -505,12 +505,15 @@ fn memory_map_weights<'a>(
     // make sure the multiplications below are done in 64bit to fit the parameter counts of 13B+ models
     let n_layers = p.n_layers;
     let mut ptr: usize = 0; // keep the name as in the original c code
-    //
+
     let token_embedding_table = &base[ptr..];
     ptr += p.vocab_size * p.dim;
     // weights for rmsnorms
     let rms_att_weight = &base[ptr..];
     ptr += n_layers * p.dim;
+
+    // rms_att_weight = advance_slice(&mut ptr, n_layers * p.dim);
+
     // weights for matmuls. note dim == n_heads * head_size
     let wq = &base[ptr..];
     ptr += n_layers * p.dim * (p.n_heads * head_size);
@@ -555,6 +558,14 @@ fn memory_map_weights<'a>(
         rms_final_weight,
         wcls,
     }
+}
+
+/// Utility that returns a subslice and at the same time moves the slice. n is the size of the
+/// slice returned by the function (and number of the elements to shift).
+fn advance_slice<'a, T>(ptr: &mut &'a [T], n: usize) -> &'a [T] {
+    let out = &ptr[..n];
+    *ptr = &ptr[n..];
+    out
 }
 
 /// The Sampler, which takes logits and returns a sampled token
@@ -1039,6 +1050,7 @@ fn softmax(x: &mut [f32], size: usize) {
 /// W (d,n) @ x (n,) -> xout (d,)
 /// by far the most amount of time is spent inside this little function
 fn matmul(xout: &mut [f32], x: &[f32], w: &[f32], n: usize, d: usize) {
+    // HERE matmul wrong
     //xout.par_iter_mut().enumerate().for_each(|(i, xout_val)| {
     xout.iter_mut().enumerate().for_each(|(i, xout_val)| {
         let mut val: f32 = 0.0;
@@ -1178,7 +1190,7 @@ impl Rand {
 #[cfg(test)]
 mod tests {
     use super::debug_eprintln;
-    use crate::{AddBos, ProbIndex, TokenId, Tokenizer, matmul, rmsnorm, slicecpy};
+    use crate::{AddBos, ProbIndex, TokenId, Tokenizer, advance_slice, matmul, rmsnorm, slicecpy};
     use std::sync::{LazyLock, Mutex};
 
     // TOKENIZER tries to share the Tokenizer across test cases.
@@ -1305,6 +1317,18 @@ mod tests {
             actual,
             vec![0.6, 0.5, 0.4, 0.3, /* sort ends here */ 0.1, 0.2]
         );
+    }
+
+    #[test]
+    fn test_advance_slice() {
+        let values = vec![0, 1, 2, 3, 4, 5, 6, 7, 8];
+        let mut ptr = values.as_slice();
+        let s1 = advance_slice(&mut ptr, 3);
+        let s2 = advance_slice(&mut ptr, 3);
+        let s3 = advance_slice(&mut ptr, 2);
+        assert_eq!(s1, vec![0, 1, 2]);
+        assert_eq!(s2, vec![3, 4, 5]);
+        assert_eq!(s3, vec![6, 7]);
     }
 
     fn assert_encoding(text: &str, expected_tokens: Vec<usize>) {

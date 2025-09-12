@@ -49,3 +49,9 @@ index out of bounds: the len is 5488608 but the index is 5488608
 
 ----
 ConfigDeser { dim: 288, hidden_dim: 768, n_layers: 6, n_heads: 6, n_kv_heads: 6, vocab_size: 32000, seq_len: 256 }
+ wk: &'a [f32],             // (layer, dim, n_kv_heads * head_size)
+
+
+
+    wk size =  n_layers * p.dim * p.dim = 288*288*6 = 497664
+
