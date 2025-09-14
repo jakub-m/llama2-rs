@@ -1,4 +1,5 @@
 debug_target=target/debug/llama2-rs
+release_target=target/release/llama2-rs
 prompt="once upon a time there was a little piggy"
 
 build:
@@ -9,3 +10,11 @@ run: build
 
 debug: build
 	lldb $(debug_target) -- -z ../llama2.c/tokenizer.bin  ../llama2.c/stories15M.bin  -i '$(prompt)'
+
+release:
+	cargo build --release
+	mkdir -p bin
+	ln -sfv ../$(release_target) ./bin
+
+run-release: build
+	$(release_target) -z ../llama2.c/tokenizer.bin  ../llama2.c/stories15M.bin  -i '$(prompt)'
