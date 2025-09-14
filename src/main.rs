@@ -957,7 +957,7 @@ fn forward<'a>(
         }
 
         // ffn rmsnorm
-        rmsnorm(&mut s.xb, &x, &w.rms_ffn_weight[l * dim..], dim);
+        rmsnorm(&mut s.xb, &x, &w.rms_ffn_weight.slice_at_elem(l, dim), dim);
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
@@ -1010,6 +1010,9 @@ fn forward<'a>(
 }
 
 fn rmsnorm(o: &mut [f32], x: &[f32], weight: &[f32], size: usize) {
+    assert_eq!(o.len(), size);
+    assert_eq!(x.len(), size);
+    assert_eq!(weight.len(), size);
     // calculate sum of squares
     let mut ss: f32 = 0_f32;
     for j in 0..size {
