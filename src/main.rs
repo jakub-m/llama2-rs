@@ -846,14 +846,15 @@ fn forward<'a>(
 
     // copy the token embedding into x
     //float* content_row = w->token_embedding_table + token * dim;
-    let content_row = &w.token_embedding_table[token.as_raw() * dim..];
+    let content_row = &w.token_embedding_table.slice_at(token.as_raw() * dim, dim);
     slicecpy(&mut x[..], &content_row, dim);
 
     // forward all the layers
     for l in 0..p.n_layers {
         // attention rmsnorm
         //rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
-        rmsnorm(&mut s.xb, x, &w.rms_att_weight[l * dim..], dim);
+
+        rmsnorm(&mut s.xb, x, &w.rms_att_weight.slice_at_elem(l, dim), dim);
         // key and value point to the kv cache
         let loff = l * p.seq_len * kv_dim; // kv cache layer offset for convenience
         //s->k = s->key_cache + loff + pos * kv_dim;
@@ -863,11 +864,23 @@ fn forward<'a>(
         let s_v = s.value_cache.slice_at_mut(loff + pos * kv_dim, kv_dim);
 
         // qkv matmuls for this position
-        matmul(&mut s.q, &s.xb, &w.wq[l * dim * dim..], dim, dim); // s.q = wq(l) @ xb
+        matmul(&mut s.q, &s.xb, &w.wq.slice_at_elem(l, dim * dim), dim, dim); // s.q = wq(l) @ xb
         // matmul(s->k, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
-        matmul(s_k, &s.xb, &w.wk[l * dim * kv_dim..], dim, kv_dim); // s_k = wk(l) @ xb
+        matmul(
+            s_k,
+            &s.xb,
+            &w.wk.slice_at_elem(l, dim * kv_dim),
+            dim,
+            kv_dim,
+        ); // s_k = wk(l) @ xb
         // matmul(s->v, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
-        matmul(s_v, &s.xb, &w.wv[l * dim * kv_dim..], dim, kv_dim); // s_v = wv(l) @ xb
+        matmul(
+            s_v,
+            &s.xb,
+            &w.wv.slice_at_elem(l, dim * kv_dim),
+            dim,
+            kv_dim,
+        ); // s_v = wv(l) @ xb
 
         // RoPE relative positional encoding: complex-valued rotate q and k in each head
         // QUESTION: Why query and key are rotated in-place while iterating over each layer?
@@ -1161,6 +1174,14 @@ fn default_seed() -> u128 {
 /// A helper trait for getting the slices at position, with length.
 trait SliceAt<T> {
     fn slice_at(&self, start: usize, len: usize) -> &[T];
+
+    /// Get slice corresponding to the nth element of elem_size.
+    fn slice_at_elem(&self, i_elem: usize, elem_size: usize) -> &[T] {
+        self.slice_at(i_elem * elem_size, elem_size)
+    }
+}
+
+trait SliceAtMut<T> {
     fn slice_at_mut(&mut self, start: usize, len: usize) -> &mut [T];
 }
 
@@ -1168,8 +1189,17 @@ impl<T> SliceAt<T> for Vec<T> {
     fn slice_at(&self, start: usize, len: usize) -> &[T] {
         &self[start..start + len]
     }
+}
+
+impl<T> SliceAtMut<T> for Vec<T> {
     fn slice_at_mut(&mut self, start: usize, len: usize) -> &mut [T] {
         &mut self[start..start + len]
+    }
+}
+
+impl<T> SliceAt<T> for &[T] {
+    fn slice_at(&self, start: usize, len: usize) -> &[T] {
+        &self[start..start + len]
     }
 }
 
