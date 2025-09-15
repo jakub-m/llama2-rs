@@ -883,7 +883,6 @@ fn forward<'a>(
         ); // s_v = wv(l) @ xb
 
         // RoPE relative positional encoding: complex-valued rotate q and k in each head
-        // QUESTION: Why query and key are rotated in-place while iterating over each layer?
         for i_dim in (0..dim).step_by(2) {
             let head_dim = i_dim % head_size;
             //let freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);

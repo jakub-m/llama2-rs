@@ -1,0 +1,23 @@
+https://mermaid.live/edit#pako:eNptjl1vgjAUhv8KOVeQqAGlCL1Ylszb7WJbsmRpYopUINBWa4s6439fBUFN7EVzzvvxtCdYyYwBhnUt96uCKu18L4hw7GE8ZVlWitwlcJu1rDwCnjMevziHZdBF7eAeWk3xnZCK94Zdl1Tr5Z6VeaHb0pBw3c_3rw87et4Q7pwOnl6gqfU692fbypxqburl9vpwek33sms_-2r_d0X2cpvZGqaOA66671XPcdUDpRrgbaZiN1hz32qew5oHWPMIa2htWBfobyJgBLkqM8BaGTYCzhSnlxVOlwwBXTDOCGA7ZmxNTa0JEHG2tQ0Vv1LyvqmkyQvAa1rv7GY2GdVsUdJcUT6oiomMqTdphAYcRH7UUgCf4AB4GvqTOEIxSpIYzVCArHsEHMWTaYD8MJmHswhNZ-F5BH_tu_7EEsI4CfxgnqBoHqPzP023ue4
+
+flowchart TD
+    embedding("embedding(tok)") --> x_1
+    x_1(x) -->rmsnorm_1
+    rms_att_weight --> rmsnorm_1((RMSNorm))
+    rmsnorm_1 --> xb_1(xb)
+
+    Wq --> matmul_q
+    xb_1 --> matmul_q(("@"))
+    matmul_q --> query
+
+    Wk --> matmul_k
+    xb_1 --> matmul_k
+    matmul_k(("@")) --> key
+
+    Wv --> matmul_v
+    xb_1 --> matmul_v
+    matmul_v(("@")) --> value
+    
+    
+
+
