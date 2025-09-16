@@ -1,23 +1,56 @@
-https://mermaid.live/edit#pako:eNptjl1vgjAUhv8KOVeQqAGlCL1Ylszb7WJbsmRpYopUINBWa4s6439fBUFN7EVzzvvxtCdYyYwBhnUt96uCKu18L4hw7GE8ZVlWitwlcJu1rDwCnjMevziHZdBF7eAeWk3xnZCK94Zdl1Tr5Z6VeaHb0pBw3c_3rw87et4Q7pwOnl6gqfU692fbypxqburl9vpwek33sms_-2r_d0X2cpvZGqaOA66671XPcdUDpRrgbaZiN1hz32qew5oHWPMIa2htWBfobyJgBLkqM8BaGTYCzhSnlxVOlwwBXTDOCGA7ZmxNTa0JEHG2tQ0Vv1LyvqmkyQvAa1rv7GY2GdVsUdJcUT6oiomMqTdphAYcRH7UUgCf4AB4GvqTOEIxSpIYzVCArHsEHMWTaYD8MJmHswhNZ-F5BH_tu_7EEsI4CfxgnqBoHqPzP023ue4
+https://mermaid.live/edit#pako:eNqVVF2PmkAU_SuT--QmrFlABXlomnT71m2abZMmXRoyylUJDKPjgFrjf9_5AMR1N6Y-yNw759x7zp2BI8x5ihDBouC7-YoKSX49xiVRP2QzTNOsXA5i6NZ2i5CXLW6SAkuyJ2nG_pKB5Pmd3YyhWewTV1H3NnjRsBhs0AAE25ZcMAVTuOenn99V0ALvzpiESpnsMFuupMURlRgSm2mqf-uEFPSA4krKzGqZdeUbwKVTcn__Scvu9OtEp_I9QYZxjbChLTfTebuzSzZKxe_NpehGuk22-luFmwrFQZHM8416Vc60YFSyqlC1Fe7zeXS6s9rvAWy-jQzX1G315ahbqX8yp_MV9mSejzuvk96gHbLm27fT3iW5tplf2Wy47ztVrL6b_Jab_MKN5Srp51nXWkT9fyJqWlSoeOZ5ewr9Ih-Mou6bqm-Zqi9MWa7R0r-vgq_RnvYz__GVDEzfrqa9KeZeGlw7EBPlH7H0oXecvO0Wl-DAUmQpRFJU6ABDwagO4agxMcgVMowhUssUF7QqpH7JT4q2puUfzlnLFLxariBa0GKromqdUomPGV0KyrqswDJF8YVXpYTIG4WBqQLREfYQuZ4_HPnhw2Q0DsbudOy7Dhwg8t3hWGVH4zD03SAM3JMD_0zfh2HoBd7E84NgNPH9YDp1ANNMcvFkv3nm03d6BU5MgOc
 
 flowchart TD
-    embedding("embedding(tok)") --> x_1
-    x_1(x) -->rmsnorm_1
-    rms_att_weight --> rmsnorm_1((RMSNorm))
-    rmsnorm_1 --> xb_1(xb)
+    embedding("embedding
+      [seq_len x dim] (tok)
+    ")
+    x_1("x
+    [dim]"
+    )
+    rmsnorm_1(("RMSNorm [dim]"))
+    rms_att_weight("RMS att. weight
+    [L x dim] (layer)
+    ")
+    xb_1("xb [dim]")
+    
+    embedding --> x_1
+    x_1 -->rmsnorm_1
+    rms_att_weight --> rmsnorm_1
+    rmsnorm_1 --> xb_1
 
-    Wq --> matmul_q
-    xb_1 --> matmul_q(("@"))
+    w_q("Wq
+    [L x dim x dim]
+    (layer)")
+    query("query [dim]")
+    w_q --> matmul_q(("@"))
+    xb_1 ---> matmul_q
     matmul_q --> query
 
-    Wk --> matmul_k
-    xb_1 --> matmul_k
-    matmul_k(("@")) --> key
+    key("key cache
+    [L x seq_len x kv_dim] (layer, pos)
+    ")
+    w_k("Wk
+    [L x dim x kv_dim]
+    (layer)")
+    w_k --> matmul_k(("@"))
+    xb_1 ---> matmul_k
+    matmul_k --> key
 
-    Wv --> matmul_v
-    xb_1 --> matmul_v
-    matmul_v(("@")) --> value
+    w_v("Wv
+    [L x dim x kv_dim]
+    (layer)")
+    value("value cache
+    [L x seq_len x kv_dim]
+    (layer, pos)
+    ")
+    w_v --> matmul_v(("@"))
+    xb_1 ---> matmul_v
+    matmul_v --> value
     
-    
+    rope_q(("RoPE (pos)"))
+    query --> rope_q
 
+    rope_k(("RoPE (pos)"))
+    key --> rope_k
+    
 

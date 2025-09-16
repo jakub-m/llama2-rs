@@ -846,7 +846,7 @@ fn forward<'a>(
 
     // copy the token embedding into x
     //float* content_row = w->token_embedding_table + token * dim;
-    let content_row = &w.token_embedding_table.slice_at(token.as_raw() * dim, dim);
+    let content_row = &w.token_embedding_table.slice_at_elem(token.as_raw(), dim);
     slicecpy(&mut x[..], &content_row, dim);
 
     // forward all the layers
@@ -907,6 +907,7 @@ fn forward<'a>(
             }
         }
         // multihead attention. iterate over all attention heads
+        //
         (s.att)
             .par_iter_mut()
             .zip(s.xb.par_chunks_mut(head_size))
@@ -1178,8 +1179,8 @@ trait SliceAt<T> {
     fn slice_at(&self, start: usize, len: usize) -> &[T];
 
     /// Get slice corresponding to the nth element of elem_size.
-    fn slice_at_elem(&self, i_elem: usize, elem_size: usize) -> &[T] {
-        self.slice_at(i_elem * elem_size, elem_size)
+    fn slice_at_elem(&self, i: usize, size: usize) -> &[T] {
+        self.slice_at(i * size, size)
     }
 }
 
