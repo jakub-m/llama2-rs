@@ -1,4 +1,5 @@
-https://mermaid.live/edit#pako:eNqVVF2PmkAU_SuT--QmrFlABXlomnT71m2abZMmXRoyylUJDKPjgFrjf9_5AMR1N6Y-yNw759x7zp2BI8x5ihDBouC7-YoKSX49xiVRP2QzTNOsXA5i6NZ2i5CXLW6SAkuyJ2nG_pKB5Pmd3YyhWewTV1H3NnjRsBhs0AAE25ZcMAVTuOenn99V0ALvzpiESpnsMFuupMURlRgSm2mqf-uEFPSA4krKzGqZdeUbwKVTcn__Scvu9OtEp_I9QYZxjbChLTfTebuzSzZKxe_NpehGuk22-luFmwrFQZHM8416Vc60YFSyqlC1Fe7zeXS6s9rvAWy-jQzX1G315ahbqX8yp_MV9mSejzuvk96gHbLm27fT3iW5tplf2Wy47ztVrL6b_Jab_MKN5Srp51nXWkT9fyJqWlSoeOZ5ewr9Ih-Mou6bqm-Zqi9MWa7R0r-vgq_RnvYz__GVDEzfrqa9KeZeGlw7EBPlH7H0oXecvO0Wl-DAUmQpRFJU6ABDwagO4agxMcgVMowhUssUF7QqpH7JT4q2puUfzlnLFLxariBa0GKromqdUomPGV0KyrqswDJF8YVXpYTIG4WBqQLREfYQuZ4_HPnhw2Q0DsbudOy7Dhwg8t3hWGVH4zD03SAM3JMD_0zfh2HoBd7E84NgNPH9YDp1ANNMcvFkv3nm03d6BU5MgOc
+%% https://mermaid.live/edit#pako:eNqVVF2PmkAU_SuT--QmrFlABXlomnT71m2abZMmXRoyylUJDKPjgFrjf9_5AMR1N6Y-yNw759x7zp2BI8x5ihDBouC7-YoKSX49xiVRP2QzTNOsXA5i6NZ2i5CXLW6SAkuyJ2nG_pKB5Pmd3YyhWewTV1H3NnjRsBhs0AAE25ZcMAVTuOenn99V0ALvzpiESpnsMFuupMURlRgSm2mqf-uEFPSA4krKzGqZdeUbwKVTcn__Scvu9OtEp_I9QYZxjbChLTfTebuzSzZKxe_NpehGuk22-luFmwrFQZHM8416Vc60YFSyqlC1Fe7zeXS6s9rvAWy-jQzX1G315ahbqX8yp_MV9mSejzuvk96gHbLm27fT3iW5tplf2Wy47ztVrL6b_Jab_MKN5Srp51nXWkT9fyJqWlSoeOZ5ewr9Ih-Mou6bqm-Zqi9MWa7R0r-vgq_RnvYz__GVDEzfrqa9KeZeGlw7EBPlH7H0oXecvO0Wl-DAUmQpRFJU6ABDwagO4agxMcgVMowhUssUF7QqpH7JT4q2puUfzlnLFLxariBa0GKromqdUomPGV0KyrqswDJF8YVXpYTIG4WBqQLREfYQuZ4_HPnhw2Q0DsbudOy7Dhwg8t3hWGVH4zD03SAM3JMD_0zfh2HoBd7E84NgNPH9YDp1ANNMcvFkv3nm03d6BU5MgOc
+
 
 flowchart TD
     embedding("embedding
@@ -12,7 +13,9 @@ flowchart TD
     [L x dim] (layer)
     ")
     xb_1("xb [dim]")
-    
+
+    %% This is for every layer    
+
     embedding --> x_1
     x_1 -->rmsnorm_1
     rms_att_weight --> rmsnorm_1
@@ -47,10 +50,25 @@ flowchart TD
     xb_1 ---> matmul_v
     matmul_v --> value
     
-    rope_q(("RoPE (pos)"))
+    rope_q(["RoPE (pos)"])
     query --> rope_q
 
-    rope_k(("RoPE (pos)"))
+    rope_k(["RoPE (pos)"])
     key --> rope_k
     
-
+    %% This is for every attention head
+    rope_q --[n_heads x head_size] (head)--> att_q
+    rope_k --[???]--> att_k
+    value --[???]--> att_v
+    subgraph Each attention head
+      att_q("query slice") --> att_dot_1
+      att_k("key slice") --> att_dot_1
+      att_dot_1(["dot"]) --> att
+      att("attention scores") --> att_softmax
+      att_softmax(["softmax"])
+      att_v("value slice")
+      att_softmax-->att_dot_2
+      att_v-->att_dot_2
+      att_dot_2(["dot"]) --> att_xb
+      att_xb["xb"]
+    end
