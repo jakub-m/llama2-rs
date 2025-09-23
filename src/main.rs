@@ -949,7 +949,13 @@ fn forward<'a>(
             });
 
         // final matmul to get the output of the attention
-        matmul(&mut s.xb2, &s.xb, &w.wo[l * dim * dim..], dim, dim);
+        matmul(
+            &mut s.xb2,
+            &s.xb,
+            &w.wo.slice_at_elem(l, dim * dim),
+            dim,
+            dim,
+        );
 
         // residual connection back into x
         for i in 0..dim {
@@ -964,7 +970,7 @@ fn forward<'a>(
         matmul(
             &mut s.hb,
             &s.xb,
-            &w.w1[l * dim * hidden_dim..],
+            &w.w1.slice_at_elem(l, dim * hidden_dim), //[l * dim * hidden_dim..],
             dim,
             hidden_dim,
         );
