@@ -21,6 +21,8 @@ To run tests you need `tokenizer.bin` from the [original repo][1].
 
 # Diagrams
 
+The detailed flow diagram based directly on the code:
+
 ```mermaid
 $detailed_mermaid
 ```
