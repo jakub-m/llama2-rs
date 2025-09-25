@@ -3,6 +3,10 @@ release_target=target/release/llama2-rs
 prompt="once upon a time there was a little piggy"
 # RAYON_NUM_THREADS=1 
 
+readme: README.md
+README.md: ./README.md.tpl ./gen_readme.py ./diagram.mermaid
+	python3 ./gen_readme.py > README.md
+
 release: $(release_target)
 	mkdir -p bin
 	ln -sfv ../$(release_target) ./bin

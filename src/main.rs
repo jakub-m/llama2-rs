@@ -977,7 +977,8 @@ fn forward<'a>(
         matmul(
             &mut s.hb2,
             &s.xb,
-            &w.w3[l * dim * hidden_dim..],
+            //&w.w3[l * dim * hidden_dim..],
+            &w.w3.slice_at_elem(l, dim * hidden_dim),
             dim,
             hidden_dim,
         );
@@ -995,7 +996,8 @@ fn forward<'a>(
         matmul(
             &mut s.xb,
             &s.hb,
-            &w.w2[l * dim * hidden_dim..],
+            //&w.w2[l * dim * hidden_dim..],
+            &w.w2.slice_at_elem(l, dim * hidden_dim),
             hidden_dim,
             dim,
         );

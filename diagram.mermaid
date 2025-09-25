@@ -1,17 +1,18 @@
-%% https://mermaid.live/edit#pako:eNqVVF2PmkAU_SuT--QmrFlABXlomnT71m2abZMmXRoyylUJDKPjgFrjf9_5AMR1N6Y-yNw759x7zp2BI8x5ihDBouC7-YoKSX49xiVRP2QzTNOsXA5i6NZ2i5CXLW6SAkuyJ2nG_pKB5Pmd3YyhWewTV1H3NnjRsBhs0AAE25ZcMAVTuOenn99V0ALvzpiESpnsMFuupMURlRgSm2mqf-uEFPSA4krKzGqZdeUbwKVTcn__Scvu9OtEp_I9QYZxjbChLTfTebuzSzZKxe_NpehGuk22-luFmwrFQZHM8416Vc60YFSyqlC1Fe7zeXS6s9rvAWy-jQzX1G315ahbqX8yp_MV9mSejzuvk96gHbLm27fT3iW5tplf2Wy47ztVrL6b_Jab_MKN5Srp51nXWkT9fyJqWlSoeOZ5ewr9Ih-Mou6bqm-Zqi9MWa7R0r-vgq_RnvYz__GVDEzfrqa9KeZeGlw7EBPlH7H0oXecvO0Wl-DAUmQpRFJU6ABDwagO4agxMcgVMowhUssUF7QqpH7JT4q2puUfzlnLFLxariBa0GKromqdUomPGV0KyrqswDJF8YVXpYTIG4WBqQLREfYQuZ4_HPnhw2Q0DsbudOy7Dhwg8t3hWGVH4zD03SAM3JMD_0zfh2HoBd7E84NgNPH9YDp1ANNMcvFkv3nm03d6BU5MgOc
-
-
 flowchart TD
 
 embedding("embedding <br/> [seq_len x dim] <br/> (tok)")
+embedding --> x_1
 x_1("x <br/> [dim]")
+
+%% subgraph For each layer
+
 rmsnorm_1(("RMSNorm <br/> [dim]"))
 rms_att_weight("RMS att. weight <br/> [L x dim] <br/> (layer)")
 xb_1("xb <br/> [dim]")
 
 %% This is for every layer    
 
-embedding --> x_1
+
 x_1 -->rmsnorm_1
 rms_att_weight --> rmsnorm_1
 rmsnorm_1 --> xb_1
@@ -72,19 +73,60 @@ x_2-->fnn_rmsnorm
 xb_2("xb' <br/> [dim]")
 fnn_rmsnorm-->xb_2
 xb_2-->fnn_matmul_hb
-    xb_2-->fnn_matmul_hb2
+xb_2-->fnn_matmul_hb2
+
 subgraph FNN with SwiGLU
     fnn_matmul_hb(("@"))
     fnn_hb("hb <br/> [hidden_dim]")
-    w1("w1 <br/> [L x dim x hidden_dim] <br/> (layer)")
+    w1("W1 <br/> [L x dim x hidden_dim] <br/> (layer)")
     
     w1 --> fnn_matmul_hb
     fnn_matmul_hb-->fnn_hb
 
     fnn_matmul_hb2(("@"))
     fnn_hb2("hb2 <br/> [hidden_dim]")
-    w3("w3 <br/> [L x dim x hidden_dim] <br/> (layer)")
+    w3("W3 <br/> [L x dim x hidden_dim] <br/> (layer)")
     
     w3 --> fnn_matmul_hb2
     fnn_matmul_hb2-->fnn_hb2
+
+    fnn_hb_2("hb' <br> [hidden_dim]")
+    swiglu_hb((SwiGLU))
+    fnn_hb --> swiglu_hb
+    fnn_hb2 --> swiglu_hb
+    swiglu_hb --> fnn_hb_2
+    fnn_hb_2
 end 
+
+xb_3("xb'' <br> [dim]")
+w2("W2 <br> [L x dim x hidden_dim] <br> (layer)")
+fnn_matmul_final(("@"))
+w2 --> fnn_matmul_final
+fnn_hb_2 --> fnn_matmul_final
+fnn_matmul_final-->xb_3
+
+x_2 --> add_x_xb_3
+xb_3 --> add_x_xb_3
+x_3("x'' <br> [dim]")
+add_x_xb_3(("+"))
+add_x_xb_3 --> x_3
+
+x_3 == "LOOP FOR EACH LAYER <br> x'' is x in next iteration" ==> x_1
+
+%% end for each layer
+
+%% outside loop
+rms_final_weight("RMS final <br> weight <br> [dim]") --> rmsnorm_final
+rmsnorm_final(("RMSNorm"))
+x_4("x''' <br> [dim]")
+x_3 =="After final layer"==> rmsnorm_final
+rmsnorm_final --> x_4
+
+wcls("Wcls <br> [dim x vocab_size]")
+logits("logits <br> [vocab_size]")
+matmul_logit(("@"))
+x_4 --> matmul_logit
+wcls --> matmul_logit
+matmul_logit --> logits
+logits --> sampler
+sampler --> decoder
