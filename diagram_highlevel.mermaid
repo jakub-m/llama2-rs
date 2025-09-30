@@ -5,12 +5,16 @@ add_residual(("+"))
 attention("Attention <br> N heads <br> (parallel)")
 embedding("Embedding <br> for input token")
 fnn_swiglu("FNN w. SwiGLU <br> W1, W2, W3, Wfnn")
+layer_2("Next layer...")
+layer_3("Final layer")
+logits_sampler_decoder("RMS norm, Wcls <br> Logits <br> Sampler <br> Decoder")
 query_key("Query <br> Key cache <br> Wq, Wk")
 rms_norm_emb("RMS norm")
 rope(["RoPE"])
 
 
 embedding --> rms_norm_emb
+embedding--"Residual <br> connection"-->add_residual
 
 %%%% layer internals %%%%
 subgraph "Layer"
@@ -20,8 +24,6 @@ query_key --> rope
 rope --> attention
 rms_norm_emb --"Value cache <br> Wv"--> attention
 
-
-embedding--"Residual <br> connection"-->add_residual
 attention=="Wo"==>add_residual
 
 add_residual --> fnn_swiglu
@@ -30,6 +32,12 @@ add_residual --> add_fnn_swiglu
 
 end
 %%%% end layer internals %%%%
+
+add_fnn_swiglu --> layer_2
+layer_2 --"..."--> layer_3
+layer_3 --> logits_sampler_decoder
+
+
 
 %% styles
 classDef dashed fill:#fff,stroke:#000,stroke-dasharray: 5 5;
