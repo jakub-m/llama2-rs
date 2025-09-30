@@ -14,13 +14,10 @@ To run tests you need `tokenizer.bin` from the [original repo][1].
 - [mermaid](https://mermaid.live) is an absolutely fantastic tool for diagrams.
 
 # Materials
-- [Transformer](https://jalammar.github.io/illustrated-transformer/) - Top material! Self-attention, query, key, values, multi-headed attention, positional encodings, and more materials.
-- [Encoder, decoder](https://medium.com/@ahmadsabry678/a-perfect-guide-to-understand-encoder-decoders-in-depth-with-visuals-30805c23659b)
-- [Attention and seq2seq](https://jalammar.github.io/visualizing-neural-machine-translation-mechanics-of-seq2seq-models-with-attention/)
-- [LLM Embeddings Explained: A Visual and Intuitive Guide](https://huggingface.co/spaces/hesamation/primer-llm-embedding)
-- [SwiGLU](https://medium.com/@s_boudefel/exploring-swiglu-the-activation-function-powering-modern-llms-9697f88221e7)
 - [From Multi-Head to Latent Attention: The Evolution of Attention Mechanisms](https://vinithavn.medium.com/from-multi-head-to-latent-attention-the-evolution-of-attention-mechanisms-64e3c0505f24)
 - [Positional Embeddings in Transformers: A Math Guide to RoPE & ALiBi](https://towardsdatascience.com/positional-embeddings-in-transformers-a-math-guide-to-rope-alibi/)
+- [LLM Embeddings Explained: A Visual and Intuitive Guide](https://huggingface.co/spaces/hesamation/primer-llm-embedding)
+- [SwiGLU](https://medium.com/@s_boudefel/exploring-swiglu-the-activation-function-powering-modern-llms-9697f88221e7)
 
 # Diagrams
 
@@ -161,4 +158,5 @@ logits --> sampler
 sampler --> decoder
 
 ```
+
 

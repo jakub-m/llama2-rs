@@ -4,7 +4,7 @@ prompt="once upon a time there was a little piggy"
 # RAYON_NUM_THREADS=1 
 
 readme: README.md
-README.md: ./README.md.tpl ./gen_readme.py ./diagram.mermaid
+README.md: ./README.md.tpl ./gen_readme.py ./*.mermaid
 	python3 ./gen_readme.py > README.md
 
 release: $(release_target)
