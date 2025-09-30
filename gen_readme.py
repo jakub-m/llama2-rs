@@ -11,7 +11,7 @@ def main():
         value_body = mermaid_path.open().read()
         template_values[value_name] = value_body
         print(
-            f"{mermaid_path} -> {value_name} {len(value_body) // 1024}kB",
+            f"{mermaid_path} -> {value_name} {len(value_body) / 1024:.1f}kB",
             file=sys.stderr,
         )
     rendered = Template(readme_tpl_content).substitute(**template_values)

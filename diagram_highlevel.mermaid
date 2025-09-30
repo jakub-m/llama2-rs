@@ -1,0 +1,37 @@
+flowchart TD
+
+add_fnn_swiglu(("+"))
+add_residual(("+"))
+attention("Attention <br> N heads <br> (parallel)")
+embedding("Embedding <br> for input token")
+fnn_swiglu("FNN w. SwiGLU <br> W1, W2, W3, Wfnn")
+query_key("Query <br> Key cache <br> Wq, Wk")
+rms_norm_emb("RMS norm")
+rope(["RoPE"])
+
+
+embedding --> rms_norm_emb
+
+%%%% layer internals %%%%
+subgraph "Layer"
+
+rms_norm_emb --> query_key
+query_key --> rope
+rope --> attention
+rms_norm_emb --"Value cache <br> Wv"--> attention
+
+
+embedding--"Residual <br> connection"-->add_residual
+attention=="Wo"==>add_residual
+
+add_residual --> fnn_swiglu
+fnn_swiglu --> add_fnn_swiglu
+add_residual --> add_fnn_swiglu
+
+end
+%%%% end layer internals %%%%
+
+%% styles
+classDef dashed fill:#fff,stroke:#000,stroke-dasharray: 5 5;
+classDef fat stroke-width: 3px;
+class attention fat
