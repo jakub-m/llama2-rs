@@ -877,6 +877,11 @@ fn forward<'a>(
         }
         // multihead attention. iterate over all attention heads
         //
+        trace!(
+            "att.len={att_len} s.xb.len={xb_len} head_size={head_size}",
+            att_len = s.att.len(),
+            xb_len = s.xb.len()
+        );
         (s.att)
             .par_iter_mut()
             .zip(s.xb.par_chunks_mut(head_size))
