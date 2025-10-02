@@ -1,3 +1,5 @@
+mod log;
+
 use clap::Parser;
 use memmap2::{Mmap, MmapOptions};
 use rayon::prelude::*;
@@ -9,42 +11,6 @@ use std::{
     rc::Rc,
     time::{SystemTime, UNIX_EPOCH},
 };
-
-#[cfg(feature = "debug")]
-#[macro_export]
-macro_rules! debug_eprintln {
-    ($($arg:tt)*) => {
-        {
-            eprintln!($($arg)*);
-        }
-    };
-}
-
-#[cfg(feature = "debug")]
-#[macro_export]
-macro_rules! debug_eprint {
-    ($($arg:tt)*) => {
-        {
-            eprint!($($arg)*);
-        }
-    };
-}
-
-#[cfg(not(feature = "debug"))]
-#[macro_export]
-macro_rules! debug_eprintln {
-    ($($arg:tt)*) => {
-        /* nop */
-    };
-}
-
-#[cfg(not(feature = "debug"))]
-#[macro_export]
-macro_rules! debug_eprint {
-    ($($arg:tt)*) => {
-        /* nop */
-    };
-}
 
 #[derive(Clone)]
 struct TokenIndex {
@@ -97,7 +63,7 @@ impl Tokenizer {
             reader.read_exact(&mut buf).unwrap();
             let s = String::from_utf8(buf).unwrap();
             #[cfg(feature = "debug-encoder")]
-            debug_eprintln!("{i}: score={score} len={len} s={s:?}");
+            debug!("{i}: score={score} len={len} s={s:?}");
             vocab[i] = Rc::new(s);
         }
 
@@ -126,7 +92,7 @@ impl Tokenizer {
         sorted_vocab.sort_by(|a, b| a.token_str.partial_cmp(&b.token_str).unwrap());
 
         //for s in &sorted_vocab {
-        //    debug_eprintln!("sorted_vocab {}, {}", s.token_str, s.id);
+        //    debug!("sorted_vocab {}, {}", s.token_str, s.id);
         //}
 
         Tokenizer {
@@ -173,20 +139,20 @@ impl Tokenizer {
                 if let Some(tok) = self.str_lookup(&s) {
                     tokens.push(tok.id);
                     #[cfg(feature = "debug-encoder")]
-                    debug_eprintln!("encode {} {}", tok.token_str, tok.id);
+                    debug!("encode {} {}", tok.token_str, tok.id);
                 } else {
                     // byte_fallback encoding: just encode each byte as a token
                     // +3 is here because the first 3 vocab elements are <unk>, <s>, </s>
                     // so the individual bytes only start at index 3
                     #[cfg(feature = "debug-encoder")]
-                    debug_eprintln!("encode fallback for {s:?}");
+                    debug!("encode fallback for {s:?}");
                     for b in s.as_bytes() {
                         let i = ((*b + 3) as usize);
-                        debug_eprint!(" {b:#x} {i}");
+                        debug_print!(" {b:#x} {i}");
                         tokens.push(TokenId(i))
                     }
                     #[cfg(feature = "debug-encoder")]
-                    debug_eprintln!("");
+                    debug!("");
                 }
             }
         }
@@ -268,18 +234,18 @@ impl Tokenizer {
             if let AddEos::Yes = add_eos {
                 original.push_str("\n</s>\n")
             }
-            debug_eprint!("|");
+            debug_print!("|");
             for tok_id in &tokens {
                 let s = self.vocab.get(*tok_id).unwrap();
                 decoded.push_str(s.as_str());
-                debug_eprint!("{}|", s);
+                debug_print!("{}|", s);
             }
-            debug_eprintln!("");
+            debug!("");
             assert_eq!(
                 &decoded, &original,
                 "decoded (left) and original (right) text do not match"
             );
-            debug_eprintln!("decoded and original match");
+            debug!("decoded and original match");
         }
 
         tokens
@@ -397,7 +363,7 @@ impl<'a> Transformer<'a> {
             let mut buf = [0u8; size_of::<ConfigDeser>()];
             file.read_exact(&mut buf).unwrap();
             let config_deser: ConfigDeser = unsafe { std::mem::transmute(buf) };
-            debug_eprintln!("{config_deser:?}");
+            info!("{config_deser:?}");
             shared_weights = config_deser.is_shared_weights();
             config = config_deser.into();
         }
@@ -1131,7 +1097,7 @@ fn main() {
     let args = Args::parse();
     assert!(args.temperature >= 0.0 && args.temperature <= 1.0);
     assert!(args.topp >= 0.0 && args.topp <= 1.0);
-    debug_eprintln!("{args:?}");
+    info!("{args:?}");
 
     let transformer = Transformer::build(&args.checkpoint_path);
     assert!(args.steps <= transformer.config.seq_len);
@@ -1234,7 +1200,7 @@ impl Rand {
 
 #[cfg(test)]
 mod tests {
-    use super::debug_eprintln;
+    use super::debug;
     use crate::{AddBos, ProbIndex, TokenId, Tokenizer, advance_slice, matmul, rmsnorm, slicecpy};
     use std::sync::{LazyLock, Mutex};
 
@@ -1243,7 +1209,7 @@ mod tests {
         static TOKENIZER: LazyLock<Mutex<Tokenizer>> =
             LazyLock::new(|| Mutex::new({
                 let p = "tokenizer.bin";
-                debug_eprintln!("Loading {p}");
+                debug!("Loading {p}");
                 Tokenizer::build(p, 32000)}));
     }
 

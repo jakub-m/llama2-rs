@@ -9,9 +9,11 @@ memmap2 = "0.9.7"
 rayon = "1.11.0"
 
 [features]
-default = ["debug"]
-debug = []
-debug-encoder = ["debug"]
+default = ["log-info"]
+log-info = []
+log-debug = ["log-info"]
+log-trace = ["log-debug"]
+debug-encoder = ["log-debug"]
 
 # [profile.dev]
 # features = ["debug"]

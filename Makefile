@@ -23,7 +23,7 @@ run-release: $(release_target)
 	$(release_target) -z ../llama2.c/tokenizer.bin ../llama2.c/stories15M.bin -s 0 -i '$(prompt)'
 
 build:
-	cargo build --features debug
+	cargo build --features log-debug
 
 build-release:
 	cargo build --release
