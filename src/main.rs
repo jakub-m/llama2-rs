@@ -4,6 +4,7 @@ use logging::*;
 
 use clap::Parser;
 use memmap2::{Mmap, MmapOptions};
+use rayon;
 use rayon::prelude::*;
 use std::{
     cmp::Ordering,
@@ -887,7 +888,8 @@ fn forward<'a>(
             .zip(s.xb.par_chunks_mut(head_size))
             .enumerate()
             .for_each(|(h, (att, xb))| {
-                trace!("att head {h}");
+                let tid = rayon::current_thread_index().unwrap_or(0);
+                trace!("att head {h} rayon thread={tid}");
                 // h is the ith head, att are the attention scores for this head
                 // get the query vector for this head
                 let q = s.q.slice_at(h * head_size, head_size);
