@@ -1,4 +1,6 @@
-mod log;
+mod logging;
+#[allow(unused_imports)]
+use logging::*;
 
 use clap::Parser;
 use memmap2::{Mmap, MmapOptions};
@@ -6,7 +8,7 @@ use rayon::prelude::*;
 use std::{
     cmp::Ordering,
     f32,
-    fs::{File, metadata},
+    fs::File,
     io::{BufReader, Read},
     rc::Rc,
     time::{SystemTime, UNIX_EPOCH},
@@ -817,6 +819,7 @@ fn forward<'a>(
 
     // forward all the layers
     for l in 0..p.n_layers {
+        trace!("pos={pos} layer={l}");
         // attention rmsnorm
         //rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
 
@@ -879,6 +882,7 @@ fn forward<'a>(
             .zip(s.xb.par_chunks_mut(head_size))
             .enumerate()
             .for_each(|(h, (att, xb))| {
+                trace!("att head {h}");
                 // h is the ith head, att are the attention scores for this head
                 // get the query vector for this head
                 let q = s.q.slice_at(h * head_size, head_size);

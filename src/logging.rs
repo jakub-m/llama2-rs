@@ -1,3 +1,6 @@
+#[allow(unused_imports)]
+pub use std::process;
+
 // info
 #[cfg(feature = "log-info")]
 #[macro_export]
@@ -53,10 +56,10 @@ macro_rules! debug_print {
 // trace
 #[cfg(feature = "log-trace")]
 #[macro_export]
-macro_rules! tracd {
+macro_rules! trace {
     ($($arg:tt)*) => {
         {
-            eprint!("TRACE ");
+            eprint!("TRACE [{pid}] ", pid=process::id());
             eprintln!($($arg)*);
         }
     };

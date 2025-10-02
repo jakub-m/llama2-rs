@@ -13,17 +13,23 @@ release: $(release_target)
 
 $(release_target): build-release
 
-run: build
+run-debug: build-debug -run-debug-target
+run-trace: build-trace -run-debug-target
+
+-run-debug-target:
 	RUST_BACKTRACE=1 $(debug_target) -z ../llama2.c/tokenizer.bin ../llama2.c/stories15M.bin -s 0 -i '$(prompt)'
 
-debug: build
+debug: build-debug
 	lldb $(debug_target) -- -z ../llama2.c/tokenizer.bin ../llama2.c/stories15M.bin -s 0 -i '$(prompt)'
 
 run-release: $(release_target)
 	$(release_target) -z ../llama2.c/tokenizer.bin ../llama2.c/stories15M.bin -s 0 -i '$(prompt)'
 
-build:
+build-debug:
 	cargo build --features log-debug
+
+build-trace:
+	cargo build --features log-trace
 
 build-release:
 	cargo build --release
