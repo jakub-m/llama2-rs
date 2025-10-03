@@ -33,3 +33,6 @@ build-trace:
 
 build-release:
 	cargo build --release
+
+clean-trace:
+	rm -rf ./target/instruments/
