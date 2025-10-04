@@ -54,3 +54,8 @@ The detailed flow diagram based directly on the code:
 $diagram_details
 ```
 
+# Benchmarking
+
+Run on "tiny stories" 42M model
+
+- 132.2 tok/s - with naive use of rayon and par_iter. 8eda5d5
