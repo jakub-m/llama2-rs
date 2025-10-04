@@ -5,7 +5,7 @@ use logging::*;
 use clap::Parser;
 use memmap2::{Mmap, MmapOptions};
 use rayon;
-//use rayon::prelude::*;
+use rayon::prelude::*;
 use std::{
     cmp::Ordering,
     f32,
@@ -898,9 +898,8 @@ fn forward<'a>(
             xb_len = s.xb.len()
         );
         (s.att)
-            .iter_mut()
-            //.par_iter_mut()
-            .zip(s.xb.chunks_mut(head_size))
+            .par_iter_mut()
+            .zip(s.xb.par_chunks_mut(head_size))
             .enumerate()
             .for_each(|(h, (att, xb))| {
                 let tid = rayon::current_thread_index().unwrap_or(0);
@@ -1069,7 +1068,7 @@ fn matmul(xout: &mut [f32], x: &[f32], w: &[f32], n: usize, d: usize) {
         xout.len(),
         d
     );
-    xout.iter_mut().enumerate().for_each(|(k, xout_val)| {
+    xout.par_iter_mut().enumerate().for_each(|(k, xout_val)| {
         //xout.iter_mut().enumerate().for_each(|(k, xout_val)| { // serial
         let mut val: f32 = 0.0;
         for i in 0..n {
