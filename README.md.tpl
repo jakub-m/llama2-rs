@@ -58,4 +58,5 @@ $diagram_details
 
 Run on "tiny stories" 42M model
 
+- 34.5 tok/s  - no parallelization, no rayon, sequential as it can be. 44fce5a
 - 132.2 tok/s - with naive use of rayon and par_iter. 8eda5d5
