@@ -1,24 +1,57 @@
 use std::ops::{AddAssign, Mul};
+use std::time::SystemTime;
 
 use rayon;
 use rayon::prelude::*;
 
+fn elapsed(start: SystemTime) -> f32 {
+    let now = SystemTime::now();
+    now.duration_since(start).unwrap().as_secs_f32()
+}
+
 fn main() {
-    let _mat_d: usize = 100;
-    let _mat_n: usize = 20;
-    let _matrix_count: usize = 10;
+    let start = SystemTime::now();
+    let m_d: usize = 1000;
+    let m_n: usize = 1000;
+    let m_count: usize = 1000;
+    let n_repeat: usize = 100;
 
-    let inputs_w_x: Vec<(Vec<f32>, Vec<f32>)> = vec![(vec![0., 1., 2., 3.], vec![10., 20.])];
-    let mut outputs_xout: Vec<Vec<f32>> = vec![vec![0.; 2]];
+    println!("{t:.1} init arrays", t = elapsed(start));
 
-    outputs_xout
-        .iter_mut()
-        .zip(inputs_w_x.iter())
-        .for_each(|(xout, (w, x))| {
-            matmul(xout, x, w, 2, 2);
-        });
+    let inputs_w_x: Vec<(Vec<f32>, Vec<f32>)> = (0..m_count)
+        .map(|_| (init_vec_f32(m_d * m_n), init_vec_f32(m_n)))
+        .collect();
 
-    println!("{outputs_xout:?}");
+    let mut outputs_xout: Vec<Vec<f32>> = (0..m_count).map(|_| vec![0.; m_d]).collect();
+
+    println!("{t:.1} start matmul", t = elapsed(start));
+
+    for i in 0..n_repeat {
+        outputs_xout
+            .iter_mut()
+            .zip(inputs_w_x.iter())
+            .for_each(|(xout, (w, x))| {
+                matmul(xout, x, w, m_n, m_d);
+            });
+        println!(
+            "{t:.1} done matmuls iter {} ({}...)",
+            i + 1,
+            outputs_xout.len(),
+            t = elapsed(start)
+        );
+    }
+    println!("{t:.1} end", t = elapsed(start))
+}
+
+//// This could be generic.
+//fn init_random_vec_f32(n: usize) -> Vec<f32> {
+//    let mut rng = rand::rng();
+//    (0..n).map(|_| rng.random()).collect()
+//}
+
+fn init_vec_f32(n: usize) -> Vec<f32> {
+    let v: Vec<f32> = (0..n).map(|i| (i as f32).into()).collect();
+    v
 }
 
 /// W (d,n) @ x (n,) -> xout (d,)

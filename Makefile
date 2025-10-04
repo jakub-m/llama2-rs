@@ -35,4 +35,5 @@ build-release:
 	cargo build --release
 
 clean-trace:
-	rm -rf ./target/instruments/
+	rm -rf ./target/instruments/ || true
+	rm -rf *.trace || true
