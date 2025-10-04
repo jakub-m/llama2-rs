@@ -32,7 +32,14 @@ build-trace:
 	cargo build --features log-trace
 
 build-release:
-	cargo build --release
+	# How to show source in objdump? debuginfo=2?
+	RUSTFLAGS="-C debuginfo=2" cargo build --release
+
+objdump-llama: build-release
+	cargo objdump --release --bin llama2-rs -- --disassemble --source ${PWD}/target/release/llama2-rs
+
+clean: clean-trace
+	rm -rf target || true
 
 clean-trace:
 	rm -rf ./target/instruments/ || true
