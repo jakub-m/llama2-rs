@@ -38,11 +38,11 @@ build-release:
 run-tinystories:
 	cargo run --release --  ../llama2.c/stories42M.bin   -z ../llama2.c/tokenizer.bin -s 0 -i 'once there was a stone. '
 
-objdump-llama: build-release
-	cargo objdump --release --bin llama2-rs -- --disassemble --source ${PWD}/target/release/llama2-rs
+objdump-llama:
+	cargo objdump --release --bin llama2-rs -- --disassemble --line-numbers  --source ${PWD}/target/release/llama2-rs
 
 objdump-rayon-bench:
-	cargo objdump --release --bin rayon_bench -- --disassemble --source ${PWD}/target/release/rayon_bench
+	cargo objdump --release --bin rayon_bench -- --disassemble --line-numbers --source ${PWD}/target/release/rayon_bench
 
 clean: clean-trace
 	rm -rf target || true
