@@ -35,6 +35,9 @@ build-release:
 	# How to show source in objdump? debuginfo=2?
 	RUSTFLAGS="-C debuginfo=2" cargo build --release
 
+run-tinystories:
+	cargo run --release --  ../llama2.c/stories42M.bin   -z ../llama2.c/tokenizer.bin -s 0 -i 'once there was a stone. '
+
 objdump-llama: build-release
 	cargo objdump --release --bin llama2-rs -- --disassemble --source ${PWD}/target/release/llama2-rs
 
@@ -44,3 +47,4 @@ clean: clean-trace
 clean-trace:
 	rm -rf ./target/instruments/ || true
 	rm -rf *.trace || true
+

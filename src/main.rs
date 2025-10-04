@@ -762,6 +762,9 @@ fn generate(
     let mut token = *(prompt_tokens.next().unwrap());
     let mut pos: usize = 0; // position in the sequence
     let mut run_state = transformer.new_run_state();
+
+    let start_time = SystemTime::now();
+    let mut last_reported_time = start_time;
     while pos < steps {
         // forward the transformer to get logits for the next token
         //let logits = forward(transformer, token, pos);
@@ -792,8 +795,19 @@ fn generate(
         let piece = tokenizer.decode(token, next);
         print!("{}", piece);
         token = next;
+        report_tok_per_sec(
+            pos,
+            &start_time,
+            &mut last_reported_time,
+            ReportTokPerSec::Ongoing,
+        );
     }
-    // TODO report achieved tok/s (pos-1 because the timer starts after first iteration)
+    report_tok_per_sec(
+        pos,
+        &start_time,
+        &mut last_reported_time,
+        ReportTokPerSec::Final,
+    );
 }
 
 /// pos is i-th position of the token among all the tokens.
@@ -1209,10 +1223,39 @@ impl Rand {
     }
 }
 
+enum ReportTokPerSec {
+    /// Print token rate every N seconds.
+    Ongoing,
+    /// Just print tokens per second.
+    Final,
+}
+
+/// Return last reported time.
+fn report_tok_per_sec(
+    n_tokens: usize,
+    start_time: &SystemTime,
+    last_reported_time: &mut SystemTime,
+    mode: ReportTokPerSec,
+) {
+    let now = SystemTime::now();
+    let report_interval_sec = 5;
+
+    if let ReportTokPerSec::Ongoing = mode {
+        if now.duration_since(*last_reported_time).unwrap().as_secs() < report_interval_sec {
+            return;
+        }
+    }
+
+    let tokens_per_sec =
+        (n_tokens as f32) / (now.duration_since(*start_time).unwrap().as_secs_f32());
+    info!("{tokens_per_sec:.1} tok/s");
+    *last_reported_time = now;
+}
+
 #[cfg(test)]
 mod tests {
     use super::debug;
-    use crate::{AddBos, ProbIndex, TokenId, Tokenizer, advance_slice, matmul, rmsnorm, slicecpy};
+    use crate::{AddBos, ProbIndex, Tokenizer, advance_slice, matmul, rmsnorm, slicecpy};
     use std::sync::{LazyLock, Mutex};
 
     // TOKENIZER tries to share the Tokenizer across test cases.

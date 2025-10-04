@@ -4,3 +4,4 @@ out.log
 tokenizer.bin
 bin
 /*.trace/
+out.txt
