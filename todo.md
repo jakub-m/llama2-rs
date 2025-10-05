@@ -1,5 +1,4 @@
-- Check if compute is vectorised
-- Add some metrics how fast the model iterates
+- Change batch sizes to use cpu more.
 - Add GPU Metal support
 - Reduce model to short floats or uint
 
