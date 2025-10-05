@@ -235,8 +235,15 @@ sampler --> decoder
 
 Run on "tiny stories" 42M model
 
-- 34.5 tok/s  - no parallelization, no rayon, sequential as it can be. 44fce5a
-- 132.2 tok/s - with naive use of rayon and par_iter. 8eda5d5
+- 34.5 tok/s  - no parallelization, no rayon, sequential as it can be. [commit](https://github.com/jakub-m/llama2-rs/commit/44fce5a)
+- 132.2 tok/s - with naive use of rayon and [par_iter][par_iter]. [commit](https://github.com/jakub-m/llama2-rs/commit/8eda5d5)
+-  27.1 tok/s - using naively [par_bridge][par_bridge] [commit](https://github.com/jakub-m/llama2-rs/commit/f4d9041)
+
+Slapping naively `par_bridge` is slower that sequential execution on a single
+code. I suppose it's the overhead of coordination of those small work chunks.
+
+[par_bridge]: https://docs.rs/rayon/latest/rayon/iter/trait.ParallelBridge.html
+[par_iter]: https://docs.rs/rayon/1.11.0/rayon/iter/index.html
 
 To speed the inference up I thought about [SIMD and vectorization][vfma_rust],
 but the code seems to be vectorised already: It seems that the code is
