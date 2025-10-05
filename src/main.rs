@@ -1068,14 +1068,21 @@ fn matmul(xout: &mut [f32], x: &[f32], w: &[f32], n: usize, d: usize) {
         xout.len(),
         d
     );
-    xout.par_iter_mut().enumerate().for_each(|(k, xout_val)| {
-        //xout.iter_mut().enumerate().for_each(|(k, xout_val)| { // serial
-        let mut val: f32 = 0.0;
-        for i in 0..n {
-            val += w[k * n + i] * x[i];
-        }
-        *xout_val = val;
-    });
+    xout.iter_mut()
+        .enumerate()
+        .par_bridge()
+        .for_each(|(k, xout_val)| {
+            // Purely serial option
+            //   xout.iter_mut().enumerate().for_each(|(k, xout_val)| {
+            // Rayon par_iter_mut
+            // xout.par_iter_mut().enumerate().for_each(|(k, xout_val)| {
+            //
+            let mut val: f32 = 0.0;
+            for i in 0..n {
+                val += w[k * n + i] * x[i];
+            }
+            *xout_val = val;
+        });
 }
 
 //fn slicecpy<T: Clone>(target: &mut Vec<T>, source: &[T], n_t: usize) {
