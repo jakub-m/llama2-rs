@@ -5,3 +5,5 @@ tokenizer.bin
 bin
 /*.trace/
 out.txt
+log.out
+log.err

@@ -12,6 +12,7 @@ use std::{
     fs::File,
     io::{BufReader, Read},
     rc::Rc,
+    thread::available_parallelism,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -1061,6 +1062,7 @@ fn softmax(x: &mut [f32], size: usize) {
 /// by far the most amount of time is spent inside this little function
 /// Here d is used only for extra boundary checks, xout slice should have the correct length.
 fn matmul(xout: &mut [f32], x: &[f32], w: &[f32], n: usize, d: usize) {
+    trace!("matmul n={n} d={d}");
     assert_eq!(
         xout.len(),
         d,
@@ -1131,6 +1133,10 @@ fn main() {
     assert!(args.temperature >= 0.0 && args.temperature <= 1.0);
     assert!(args.topp >= 0.0 && args.topp <= 1.0);
     info!("{args:?}");
+    info!(
+        "Available parallelism: {}",
+        available_parallelism().unwrap()
+    );
 
     let transformer = Transformer::build(&args.checkpoint_path);
     assert!(args.steps <= transformer.config.seq_len);
