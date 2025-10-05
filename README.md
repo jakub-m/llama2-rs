@@ -235,15 +235,27 @@ sampler --> decoder
 
 Run on "tiny stories" 42M model
 
-- 34.5 tok/s  - no parallelization, no rayon, sequential as it can be. [commit](https://github.com/jakub-m/llama2-rs/commit/44fce5a)
-- 132.2 tok/s - with naive use of rayon and [par_iter][par_iter]. [commit](https://github.com/jakub-m/llama2-rs/commit/8eda5d5)
--  27.1 tok/s - using naively [par_bridge][par_bridge] [commit](https://github.com/jakub-m/llama2-rs/commit/f4d9041)
+- 34 tok/s  - no parallelization, no rayon, sequential as it can be. [commit](https://github.com/jakub-m/llama2-rs/commit/44fce5a)
+- 132 tok/s - with naive use of rayon and [par_iter][par_iter]. [commit](https://github.com/jakub-m/llama2-rs/commit/8eda5d5)
+- 27 tok/s - using naively [par_bridge][par_bridge] [commit](https://github.com/jakub-m/llama2-rs/commit/f4d9041)
+
+Perventing rayon allocating to small work chunks with
+[`with_min_len`][with_min_len] yields some benefits:
+- 1 - 132 tok/s
+- 5 - 146 tok/s
+- 10 - 153 tok/s
+- 15 - 154 tok/s  - best `with_min_len` value.
+- 20 - 150 tok/s
+- 40 - 142 tok/s
+- 70 - 115 tok/s 
+- 150 - 93 tok/s
 
 Slapping naively `par_bridge` is slower that sequential execution on a single
 code. I suppose it's the overhead of coordination of those small work chunks.
 
 [par_bridge]: https://docs.rs/rayon/latest/rayon/iter/trait.ParallelBridge.html
 [par_iter]: https://docs.rs/rayon/1.11.0/rayon/iter/index.html
+[with_min_len]: https://docs.rs/rayon/1.11.0/rayon/iter/trait.IndexedParallelIterator.html#method.with_min_len
 
 To speed the inference up I thought about [SIMD and vectorization][vfma_rust],
 but the code seems to be vectorised already: It seems that the code is
