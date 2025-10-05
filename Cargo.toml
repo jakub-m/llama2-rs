@@ -18,7 +18,7 @@ debug-encoder = ["log-debug"]
 
 # [profile.dev]
 # features = ["debug"]
-# 
+
 [profile.release]
 debug = true  # leave symbols for Instruments
 # features = []
@@ -30,3 +30,7 @@ path = "src/main.rs"
 [[bin]]
 name = "rayon_bench"
 path = "src/rayon_bench.rs"
+
+[[bin]]
+name = "example_simd"
+path = "src/example_simd.rs"

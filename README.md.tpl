@@ -60,3 +60,21 @@ Run on "tiny stories" 42M model
 
 - 34.5 tok/s  - no parallelization, no rayon, sequential as it can be. 44fce5a
 - 132.2 tok/s - with naive use of rayon and par_iter. 8eda5d5
+
+To speed the inference up I thought about [SIMD and vectorization][vfma_rust],
+but the code seems to be vectorised already: It seems that the code is
+auto-vectorised already. In the disasembled output I see those [SIMD
+instructions][vfma_arm] that [start with "f"][fmul]:
+
+```bash
+make objdump-llama | egrep '^000| \tf' | grep llama2_rs -A1 
+
+0000000100005494 <_llama2_rs::main::h9ba2e6463cb6eab5>:
+100005710: 1e202008    	fcmp	s0, #0.0
+````
+
+[vfma_rust]: https://doc.rust-lang.org/core/arch/aarch64/fn.vfma_n_f32.html
+[vfma_arm]: https://developer.arm.com/architectures/instruction-sets/intrinsics/vfma_n_f32
+[fmul]: https://developer.arm.com/documentation/ddi0602/2025-06/SIMD-FP-Instructions/FMUL--by-element---Floating-point-multiply--by-element--
+
+
