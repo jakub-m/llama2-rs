@@ -41,8 +41,8 @@ run-tinystories:
 objdump-llama:
 	cargo objdump --release --bin llama2-rs -- --disassemble --line-numbers  --source ${PWD}/target/release/llama2-rs
 
-objdump-rayon-bench:
-	cargo objdump --release --bin rayon_bench -- --disassemble --line-numbers --source ${PWD}/target/release/rayon_bench
+objdump-rayon:
+	cargo objdump --release --example rayon -- --disassemble --line-numbers --source ${PWD}/target/release/examples/rayon
 
 clean: clean-trace
 	rm -rf target || true
