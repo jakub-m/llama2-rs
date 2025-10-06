@@ -233,7 +233,7 @@ sampler --> decoder
 
 # Benchmarking
 
-I run the "tiny stories" 42M model on Apple M2 Pro 32GB:
+Run on "tiny stories" 42M model
 
 - 34 tok/s  - no parallelization, no rayon, sequential as it can be. [commit](https://github.com/jakub-m/llama2-rs/commit/44fce5a)
 
@@ -244,8 +244,7 @@ code. I suppose it's the overhead of coordination of those small work chunks.
 
 - 132 tok/s - with naive use of rayon and [par_iter][par_iter]. [commit](https://github.com/jakub-m/llama2-rs/commit/8eda5d5)
 
-
-Preventing rayon from allocating too small work chunks with
+Perventing rayon allocating to small work chunks with
 [`with_min_len`][with_min_len] yields some benefits:
 - 1 - 132 tok/s
 - 5 - 146 tok/s
@@ -279,5 +278,9 @@ make objdump-llama | egrep '^000| \tf' | grep llama2_rs -A1
 [vfma_arm]: https://developer.arm.com/architectures/instruction-sets/intrinsics/vfma_n_f32
 [fmul]: https://developer.arm.com/documentation/ddi0602/2025-06/SIMD-FP-Instructions/FMUL--by-element---Floating-point-multiply--by-element--
 
+
+# Metal
+
+[examples/metal_add.rs][examples/metal_add.rs] implements a simple addition in GPU using a shared memory buffer.
 
 

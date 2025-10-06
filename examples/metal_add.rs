@@ -1,23 +1,20 @@
 //! A rewrite of the following example into Rust:
-//! - https://developer.apple.com/documentation/metal/performing-calculations-on-a-gpu
+//!
+//! https://developer.apple.com/documentation/metal/performing-calculations-on-a-gpu
+//!
+//! The code runs addition in GPU on two arrays placed in shared memory.
 //!
 //! Some other useful links:
 //! - https://docs.rs/objc2-metal/latest/objc2_metal/
 //! - https://github.com/madsmtm/objc2/blob/main/examples/metal/triangle/main.rs
 
-use std::{ffi::c_void, ptr::NonNull};
-
-use objc2::{
-    self,
-    rc::Retained,
-    runtime::{Protocol, ProtocolObject},
-};
 use objc2_foundation::ns_string;
 use objc2_metal::{
     MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
     MTLComputePipelineState, MTLCreateSystemDefaultDevice, MTLDevice, MTLLibrary,
     MTLResourceOptions, MTLSize,
 };
+use std::{ffi::c_void, ptr::NonNull};
 
 const ADD_ARRAYS_SOURCE: &str = include_str!("./add.metal");
 
@@ -195,7 +192,3 @@ impl<T> AsNonNull for &[T] {
         NonNull::new(ptr).unwrap()
     }
 }
-
-// todo add N argument
-// todo matmul
-// todo output not needed - reserved?

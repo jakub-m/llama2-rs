@@ -1,3 +1,5 @@
+//! An example with [rayon], to check how the compiled code looks like.
+
 use std::ops::{AddAssign, Mul};
 use std::time::SystemTime;
 
