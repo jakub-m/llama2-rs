@@ -15,32 +15,35 @@ fn main() {
     let device = MTLCreateSystemDefaultDevice().unwrap();
     let command_queue = device.newCommandQueue().unwrap();
 
-    let input_a: Vec<f32> = vec![1., 2., 3., 4.];
-    let input_b: Vec<f32> = vec![10., 20., 30., 40.];
-    let output: Vec<f32> = vec![0.; 4]; // input values matter since MPSMatrixMultiplication adds
-    // to the output
-    let h = 2_usize;
-    let w = 2_usize;
-    assert_eq!(input_a.len(), h * w);
-    assert_eq!(input_b.len(), h * w);
-    assert_eq!(output.len(), h * w);
+    //   kkkkk        nnn         nnnnn
+    // m 1 2 3      k 1 2       m 22 28
+    // m 4 5 6  x   k 3 4  =    m 49 64
+    // m 7 8 9      k 5 6       m 76 100
 
-    let buf_a = unsafe {
+    let input_w: Vec<f32> = vec![1., 2., 3., 4., 5., 6., 7., 8., 9.];
+    let input_x: Vec<f32> = vec![1., 2., 3., 4., 5., 6.];
+    let output: Vec<f32> = vec![0.; 6]; // input values matter if beta MPSMatrixMultiplication is != 0 (it's GEMM)
+    // to the output
+    let dim_m = 3_usize;
+    let dim_k = 3_usize;
+    let dim_n = 2_usize;
+
+    let buf_input_w = unsafe {
         device
             .newBufferWithBytesNoCopy_length_options_deallocator(
-                input_a.as_c_void(),
-                input_a.len() * size_of::<f32>(),
+                input_w.as_c_void(),
+                input_w.len() * size_of::<f32>(),
                 MTLResourceOptions::StorageModeShared,
                 None,
             )
             .unwrap()
     };
 
-    let buf_b = unsafe {
+    let buf_input_x = unsafe {
         device
             .newBufferWithBytesNoCopy_length_options_deallocator(
-                input_b.as_c_void(),
-                input_b.len() * size_of::<f32>(),
+                input_x.as_c_void(),
+                input_x.len() * size_of::<f32>(),
                 MTLResourceOptions::StorageModeShared,
                 None,
             )
@@ -57,54 +60,53 @@ fn main() {
             )
             .unwrap()
     };
-    dbg!(&buf_out);
 
-    let m_a;
+    let mat_w;
     unsafe {
-        let m_input_a = MPSMatrix::alloc();
-        let m_a_desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-            2 as NSUInteger,
-            2 as NSUInteger,
-            2 * size_of::<f32>() as NSUInteger,
+        let mat = MPSMatrix::alloc();
+        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
+            dim_m as NSUInteger,
+            dim_k as NSUInteger,
+            dim_k * size_of::<f32>() as NSUInteger,
             MPSDataType::Float32,
         );
 
-        m_a = MPSMatrix::initWithBuffer_descriptor(m_input_a, &buf_a, &m_a_desc);
+        mat_w = MPSMatrix::initWithBuffer_descriptor(mat, &buf_input_w, &desc);
     }
-    dbg!(&m_a);
+    dbg!(&mat_w);
 
-    let m_b;
+    let mat_x;
     unsafe {
-        let m_input_b = MPSMatrix::alloc();
-        let m_b_desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-            2 as NSUInteger,
-            2 as NSUInteger,
-            2 * size_of::<f32>() as NSUInteger,
+        let mat = MPSMatrix::alloc();
+        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
+            dim_k as NSUInteger,
+            dim_n as NSUInteger,
+            dim_n * size_of::<f32>() as NSUInteger,
             MPSDataType::Float32,
         );
 
-        m_b = MPSMatrix::initWithBuffer_descriptor(m_input_b, &buf_b, &m_b_desc);
+        mat_x = MPSMatrix::initWithBuffer_descriptor(mat, &buf_input_x, &desc);
     }
-    dbg!(&m_b);
+    dbg!(&mat_x);
 
-    let m_out;
+    let mat_out;
     unsafe {
-        let m_output = MPSMatrix::alloc();
-        let m_out_desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-            2 as NSUInteger,
-            2 as NSUInteger,
-            2 * size_of::<f32>() as NSUInteger,
+        let mat = MPSMatrix::alloc();
+        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
+            dim_m as NSUInteger,
+            dim_n as NSUInteger,
+            dim_n * size_of::<f32>() as NSUInteger,
             MPSDataType::Float32,
         );
 
-        m_out = MPSMatrix::initWithBuffer_descriptor(m_output, &buf_out, &m_out_desc);
+        mat_out = MPSMatrix::initWithBuffer_descriptor(mat, &buf_out, &desc);
     }
-    dbg!(&m_out);
+    dbg!(&mat_out);
 
     let command_buffer = command_queue.commandBuffer().unwrap();
     dbg!(&command_buffer);
     // no compute encoder, because we don't have our library functions.
-    //
+
     let matmul;
     unsafe {
         let matmul_alloc = MPSMatrixMultiplication::alloc();
@@ -113,28 +115,28 @@ fn main() {
             &device,
             false, // transpose
             false,
-            2, // rows and cols
-            2,
-            2,
+            dim_m, // rows and cols
+            dim_n,
+            dim_k,
             1.0, // alpha, beta
-            1.0,
+            0.0,
         );
     };
     dbg!(&matmul);
     unsafe {
         matmul.encodeToCommandBuffer_leftMatrix_rightMatrix_resultMatrix(
             &command_buffer,
-            &m_a,
-            &m_b,
-            &m_out,
+            &mat_w,
+            &mat_x,
+            &mat_out,
         );
     }
     command_buffer.commit();
     command_buffer.waitUntilCompleted();
     dbg!(command_buffer.status());
 
-    dbg!(input_a);
-    dbg!(input_b);
+    dbg!(input_w);
+    dbg!(input_x);
     dbg!(output);
 }
 

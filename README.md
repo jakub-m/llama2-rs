@@ -281,6 +281,6 @@ make objdump-llama | egrep '^000| \tf' | grep llama2_rs -A1
 
 # Metal
 
-[examples/metal_add.rs][examples/metal_add.rs] implements a simple addition in GPU using a shared memory buffer.
-
+- [examples/metal_add.rs][examples/metal_add.rs] implements a simple addition in GPU using a shared memory buffer.
+- [examples/metal_matmul.rs][examples/metal_matmul.rs] runs matrix multiplication on GPU.
 
