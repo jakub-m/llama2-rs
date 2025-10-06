@@ -1,5 +1,5 @@
-- Change batch sizes to use cpu more.
-- check matmul input size, why 15 is the best? n cores?
+- fn newDepthStencilStateWithDescriptor(
+  - add metal
 - Add GPU Metal support
 - Reduce model to short floats or uint
 

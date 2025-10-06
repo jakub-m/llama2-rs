@@ -233,7 +233,7 @@ sampler --> decoder
 
 # Benchmarking
 
-Run on "tiny stories" 42M model
+I run the "tiny stories" 42M model on Apple M2 Pro 32GB:
 
 - 34 tok/s  - no parallelization, no rayon, sequential as it can be. [commit](https://github.com/jakub-m/llama2-rs/commit/44fce5a)
 
@@ -244,7 +244,8 @@ code. I suppose it's the overhead of coordination of those small work chunks.
 
 - 132 tok/s - with naive use of rayon and [par_iter][par_iter]. [commit](https://github.com/jakub-m/llama2-rs/commit/8eda5d5)
 
-Perventing rayon allocating to small work chunks with
+
+Preventing rayon from allocating too small work chunks with
 [`with_min_len`][with_min_len] yields some benefits:
 - 1 - 132 tok/s
 - 5 - 146 tok/s
