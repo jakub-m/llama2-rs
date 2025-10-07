@@ -31,12 +31,13 @@ impl MetalState {
 /// ```text
 /// W (d,n) @ x (n,) -> xout (d,)
 ///
-///   --d--     1       1(=u)
+///   --n--       1     1(=u)
 /// | wwwww     | x     | o
-/// n wwwww (x) | x   = n o
-/// | wwwww     d x     | o
+/// d wwwww  @  | x  =  d o
+/// | wwwww     n x     | o
 ///             | x
 ///             | x
+///
 /// n - n. rows
 /// d - internal
 /// 1 - n cols
@@ -53,7 +54,12 @@ pub fn matmul(
 
     // Declare shared buffers. The memory is already allocaded in the main code, here we say to
     // share the allocated memory with GPU.
-    assert_eq!(w.len(), dim_n * dim_d);
+    assert_eq!(
+        w.len(),
+        dim_n * dim_d,
+        "w.len() ({w_len}) != n * d ({dim_n} * {dim_d})",
+        w_len = w.len(),
+    );
     let buf_w = unsafe {
         metal_state
             .device
@@ -66,7 +72,12 @@ pub fn matmul(
             .unwrap()
     };
 
-    assert_eq!(x.len(), dim_d);
+    assert_eq!(
+        x.len(),
+        dim_n,
+        "x.len() ({x_len}) != dim_n ({dim_n})",
+        x_len = x.len()
+    );
     let buf_x = unsafe {
         metal_state
             .device
@@ -79,7 +90,12 @@ pub fn matmul(
             .unwrap()
     };
 
-    assert_eq!(xout.len(), dim_n);
+    assert_eq!(
+        xout.len(),
+        dim_d,
+        "xout.len() ({xout_len}) != dim_d ({dim_d})",
+        xout_len = xout.len()
+    );
     let buf_xout = unsafe {
         metal_state
             .device
