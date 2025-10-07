@@ -114,9 +114,9 @@ pub fn matmul(
     unsafe {
         let mat = MPSMatrix::alloc();
         let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-            dim_n as NSUInteger,
             dim_d as NSUInteger,
-            dim_d * size_of::<f32>() as NSUInteger, // stride
+            dim_n as NSUInteger,
+            dim_n * size_of::<f32>() as NSUInteger, // stride
             MPSDataType::Float32,
         );
         mat_w = MPSMatrix::initWithBuffer_descriptor(mat, &buf_w, &desc);
@@ -127,7 +127,7 @@ pub fn matmul(
     unsafe {
         let mat = MPSMatrix::alloc();
         let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-            dim_d as NSUInteger,
+            dim_n as NSUInteger,
             dim_u as NSUInteger,
             dim_u * size_of::<f32>() as NSUInteger,
             MPSDataType::Float32,
@@ -141,7 +141,7 @@ pub fn matmul(
     unsafe {
         let mat = MPSMatrix::alloc();
         let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-            dim_n as NSUInteger,
+            dim_d as NSUInteger,
             dim_u as NSUInteger,
             dim_u * size_of::<f32>() as NSUInteger,
             MPSDataType::Float32,
@@ -161,9 +161,9 @@ pub fn matmul(
                 &metal_state.device,
                 false,
                 false,
-                dim_n,
-                dim_u,
                 dim_d,
+                dim_u,
+                dim_n,
                 1.0,
                 0.0,
             )
@@ -212,8 +212,9 @@ impl<T> AsNonNull for &mut [T] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// There should be a similar test in main.rs but for the regular matmul.
     #[test]
-    fn tests_matmul() {
+    fn tests_matmul_w_4_3() {
         let input_w: Vec<f32> = vec![
             1., 2., 3., //
             4., 5., 6., //
@@ -227,7 +228,7 @@ mod tests {
         ];
         let mut output: Vec<f32> = vec![0.; 4];
         let ms = MetalState::new();
-        matmul(&ms, &mut output, &input_x, &input_w, 4, 3);
+        matmul(&ms, &mut output, &input_x, &input_w, 3, 4);
 
         assert_eq!(
             output,
@@ -239,4 +240,30 @@ mod tests {
             ]
         );
     }
+
+    //#[test]
+    //fn test_matmul_large_vector() {
+    //    //matmul xout.len=1376 x.len=512 w.len=704512
+    //    // W (d,n) @ x (n,) -> xout (d,)
+    //    let dim_n: usize = 512;
+    //    let dim_d: usize = 1376;
+
+    //    let mut input_w = vec![0_f32; dim_n * dim_d];
+
+    //    for i_d in 0..dim_d {
+    //        for i_n in 0..dim_n {
+    //            input_w[i_n + dim_n * i_d] = 0.01 * i_n as f32 + 1. * i_d as f32;
+    //        }
+    //    }
+
+    //    let mut input_x = vec![0_f32; dim_n];
+    //    for i in 0..dim_n {
+    //        input_x[i] = 0.001 * i as f32;
+    //    }
+
+    //    let mut output = vec![0_f32; dim_d];
+
+    //    let ms = MetalState::new();
+    //    matmul(&ms, &mut output, &input_x, &input_w, dim_n, dim_d);
+    //}
 }

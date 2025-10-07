@@ -3,7 +3,7 @@ mod metal;
 
 #[allow(unused_imports)]
 use logging::*;
-use metal::{MetalState, matmul as metal_matmul};
+use metal::{MetalState, matmul as proper_metal_matmul};
 
 use clap::Parser;
 use memmap2::{Mmap, MmapOptions};
@@ -1076,6 +1076,37 @@ fn softmax(x: &mut [f32], size: usize) {
     }
 }
 
+pub fn metal_matmul(
+    metal_state: &MetalState,
+    xout: &mut [f32],
+    x: &[f32],
+    w: &[f32],
+    dim_n: usize,
+    dim_d: usize,
+) {
+    proper_metal_matmul(metal_state, xout, x, w, dim_n, dim_d);
+    {
+        //eprintln!(
+        //    "matmul xout.len={} x.len={} w.len={}, dim_n={dim_n}, dim_d={dim_d}",
+        //    xout.len(),
+        //    x.len(),
+        //    w.len()
+        //);
+        // compare for test
+        let mut tmp = vec![0_f32; xout.len()];
+        matmul(&mut tmp, x, w, dim_n, dim_d);
+        assert_eq!(tmp.len(), xout.len());
+        for i in 0..tmp.len() {
+            assert!(
+                (tmp[i] - xout[i]).abs() < 0.00001,
+                "tmp[{i}]={l}, xout[{i}]={r}",
+                l = tmp[i],
+                r = xout[i]
+            );
+        }
+    }
+}
+
 /// W (d,n) @ x (n,) -> xout (d,)
 /// by far the most amount of time is spent inside this little function
 /// Here d is used only for extra boundary checks, xout slice should have the correct length.
@@ -1393,6 +1424,33 @@ mod tests {
             ]
         );
         assert_eq!(xout.len(), 2);
+    }
+
+    #[test]
+    fn tests_matmul_w_4_3() {
+        let input_w: Vec<f32> = vec![
+            1., 2., 3., //
+            4., 5., 6., //
+            7., 8., 9., //
+            10., 11., 12., //
+        ];
+        let input_x: Vec<f32> = vec![
+            1., //
+            2., //
+            3., //
+        ];
+        let mut output: Vec<f32> = vec![0.; 4];
+        matmul(&mut output, &input_x, &input_w, 3, 4);
+
+        assert_eq!(
+            output,
+            vec![
+                1. * 1. + 2. * 2. + 3. * 3.,    //
+                4. * 1. + 5. * 2. + 6. * 3.,    //
+                7. * 1. + 8. * 2. + 9. * 3.,    //
+                10. * 1. + 11. * 2. + 12. * 3., //
+            ]
+        );
     }
 
     #[test]
