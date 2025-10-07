@@ -3,7 +3,7 @@ mod metal;
 
 #[allow(unused_imports)]
 use logging::*;
-use metal::{MetalState, matmul as proper_metal_matmul};
+use metal::{MetalState, matmul as metal_matmul};
 
 use clap::Parser;
 use memmap2::{Mmap, MmapOptions};
@@ -1073,37 +1073,6 @@ fn softmax(x: &mut [f32], size: usize) {
     // normalize
     for i in 0..size {
         x[i] /= sum;
-    }
-}
-
-pub fn metal_matmul(
-    metal_state: &MetalState,
-    xout: &mut [f32],
-    x: &[f32],
-    w: &[f32],
-    dim_n: usize,
-    dim_d: usize,
-) {
-    proper_metal_matmul(metal_state, xout, x, w, dim_n, dim_d);
-    {
-        //eprintln!(
-        //    "matmul xout.len={} x.len={} w.len={}, dim_n={dim_n}, dim_d={dim_d}",
-        //    xout.len(),
-        //    x.len(),
-        //    w.len()
-        //);
-        // compare for test
-        let mut tmp = vec![0_f32; xout.len()];
-        matmul(&mut tmp, x, w, dim_n, dim_d);
-        assert_eq!(tmp.len(), xout.len());
-        for i in 0..tmp.len() {
-            assert!(
-                (tmp[i] - xout[i]).abs() < 0.00001,
-                "tmp[{i}]={l}, xout[{i}]={r}",
-                l = tmp[i],
-                r = xout[i]
-            );
-        }
     }
 }
 
