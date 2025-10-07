@@ -1,1 +1,2 @@
-mod metal;
+pub mod logging;
+pub mod metal;

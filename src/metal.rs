@@ -163,10 +163,10 @@ pub fn matmul(
     }
     command_buffer.commit();
     command_buffer.waitUntilCompleted();
-    dbg!(command_buffer.status());
-    dbg!(&w);
-    dbg!(&x);
-    dbg!(&xout);
+    //dbg!(command_buffer.status());
+    //dbg!(&w);
+    //dbg!(&x);
+    //dbg!(&xout);
 }
 
 trait AsNonNull {

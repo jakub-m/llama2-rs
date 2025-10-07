@@ -1,6 +1,9 @@
 mod logging;
+mod metal;
+
 #[allow(unused_imports)]
 use logging::*;
+use metal::{MetalState, matmul as metal_matmul};
 
 use clap::Parser;
 use memmap2::{Mmap, MmapOptions};
@@ -750,6 +753,7 @@ impl From<ConfigDeser> for Config {
 
 /// steps - number of steps to run.
 fn generate(
+    ms: &MetalState,
     transformer: &Transformer,
     tokenizer: &Tokenizer,
     sampler: &mut Sampler,
@@ -769,7 +773,7 @@ fn generate(
     while pos < steps {
         // forward the transformer to get logits for the next token
         //let logits = forward(transformer, token, pos);
-        let logits = forward(transformer, &mut run_state, token, pos);
+        let logits = forward(ms, transformer, &mut run_state, token, pos);
         assert_eq!(
             logits.len(),
             tokenizer.vocab_size,
@@ -813,6 +817,7 @@ fn generate(
 
 /// pos is i-th position of the token among all the tokens.
 fn forward<'a>(
+    ms: &MetalState,
     transformer: &Transformer,
     s: &'a mut RunState,
     token: TokenId,
@@ -849,9 +854,17 @@ fn forward<'a>(
         let s_v = s.value_cache.slice_at_mut(loff + pos * kv_dim, kv_dim);
 
         // qkv matmuls for this position
-        matmul(&mut s.q, &s.xb, &w.wq.slice_at_elem(l, dim * dim), dim, dim); // s.q = wq(l) @ xb
+        metal_matmul(
+            ms,
+            &mut s.q,
+            &s.xb,
+            &w.wq.slice_at_elem(l, dim * dim),
+            dim,
+            dim,
+        ); // s.q = wq(l) @ xb
         // matmul(s->k, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
-        matmul(
+        metal_matmul(
+            ms,
             s_k,
             &s.xb,
             &w.wk.slice_at_elem(l, dim * kv_dim),
@@ -859,7 +872,8 @@ fn forward<'a>(
             kv_dim,
         ); // s_k = wk(l) @ xb
         // matmul(s->v, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
-        matmul(
+        metal_matmul(
+            ms,
             s_v,
             &s.xb,
             &w.wv.slice_at_elem(l, dim * kv_dim),
@@ -941,7 +955,8 @@ fn forward<'a>(
             });
 
         // final matmul to get the output of the attention
-        matmul(
+        metal_matmul(
+            ms,
             &mut s.xb2,
             &s.xb,
             &w.wo.slice_at_elem(l, dim * dim),
@@ -959,14 +974,16 @@ fn forward<'a>(
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
-        matmul(
+        metal_matmul(
+            ms,
             &mut s.hb,
             &s.xb,
             &w.w1.slice_at_elem(l, dim * hidden_dim), //[l * dim * hidden_dim..],
             dim,
             hidden_dim,
         );
-        matmul(
+        metal_matmul(
+            ms,
             &mut s.hb2,
             &s.xb,
             //&w.w3[l * dim * hidden_dim..],
@@ -985,7 +1002,8 @@ fn forward<'a>(
             s.hb[i] = val;
         }
         // final matmul to get the output of the ffn
-        matmul(
+        metal_matmul(
+            ms,
             &mut s.xb,
             &s.hb,
             //&w.w2[l * dim * hidden_dim..],
@@ -1005,7 +1023,7 @@ fn forward<'a>(
 
     // classifier into logits
     //// matmul(s->logits, x, w->wcls, p->dim, p->vocab_size);
-    matmul(&mut s.logits, &x, &w.wcls, p.dim, p.vocab_size);
+    metal_matmul(ms, &mut s.logits, &x, &w.wcls, p.dim, p.vocab_size);
     &mut s.logits
 }
 
@@ -1148,7 +1166,10 @@ fn main() {
         args.rng_seed,
     );
 
+    let ms = MetalState::new();
+
     generate(
+        &ms,
         &transformer,
         &tokenizer,
         &mut sampler,
