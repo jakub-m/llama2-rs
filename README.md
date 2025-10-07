@@ -278,9 +278,8 @@ make objdump-llama | egrep '^000| \tf' | grep llama2_rs -A1
 [vfma_arm]: https://developer.arm.com/architectures/instruction-sets/intrinsics/vfma_n_f32
 [fmul]: https://developer.arm.com/documentation/ddi0602/2025-06/SIMD-FP-Instructions/FMUL--by-element---Floating-point-multiply--by-element--
 
-
 # Metal
 
-- [examples/metal_add.rs][examples/metal_add.rs] implements a simple addition in GPU using a shared memory buffer.
-- [examples/metal_matmul.rs][examples/metal_matmul.rs] runs matrix multiplication on GPU.
+- [examples/metal_add.rs](examples/metal_add.rs) implements a simple addition in GPU using a shared memory buffer.
+- [examples/metal_matmul.rs](examples/metal_matmul.rs) runs matrix multiplication on GPU.
 
