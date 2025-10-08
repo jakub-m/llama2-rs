@@ -3,12 +3,15 @@
 //!
 //!
 //! ms per multiplication for dims n=3000 k=3000 m=3000 and 30 repeats:
-//! 14.546666 ms - all allocations done in the loop
-//! 11.805001 ms - memory allocations (even with shared memory) done outside loop
+//! 14.5 ms - all allocations done in the loop
+//! 11.8 ms - memory allocations (even with shared memory) done outside loop
+//! 11.9 ms - initialising matrices done outside loop
+//! 11.0 ms - comitting at the end of the loop
 use objc2::AnyThread;
 use objc2_foundation::NSUInteger;
 use objc2_metal::{
-    MTLCommandBuffer, MTLCommandQueue, MTLCreateSystemDefaultDevice, MTLDevice, MTLResourceOptions,
+    MTLCommandBuffer, MTLCommandQueue, MTLCopyAllDevices, MTLCreateSystemDefaultDevice, MTLDevice,
+    MTLResourceOptions,
 };
 use objc2_metal_performance_shaders::{
     MPSDataType, MPSMatrix, MPSMatrixDescriptor, MPSMatrixMultiplication,
@@ -18,7 +21,12 @@ use std::{ffi::c_void, ptr::NonNull, time::SystemTime};
 fn main() {
     let n_repeats = 30;
 
+    for (i, d) in MTLCopyAllDevices().iter().enumerate() {
+        eprintln!("(Device {j}: {d:?})", j = i + 1);
+    }
+
     let device = MTLCreateSystemDefaultDevice().unwrap();
+    eprintln!("{device:?}");
     let command_queue = device.newCommandQueue().unwrap();
 
     //   kkkkk        nnn         nnnnn
@@ -68,60 +76,52 @@ fn main() {
             .unwrap()
     };
 
-    let start = SystemTime::now();
-    eprintln!("{t} start matmul ", t = elapsed(start));
-    for i in 0..n_repeats {
-        eprint!("\r{i}  ");
-        let mat_w;
-        unsafe {
-            let mat = MPSMatrix::alloc();
-            let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-                dim_m as NSUInteger,
-                dim_k as NSUInteger,
-                dim_k * size_of::<f32>() as NSUInteger,
-                MPSDataType::Float32,
-            );
+    let mat_w;
+    unsafe {
+        let mat = MPSMatrix::alloc();
+        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
+            dim_m as NSUInteger,
+            dim_k as NSUInteger,
+            dim_k * size_of::<f32>() as NSUInteger,
+            MPSDataType::Float32,
+        );
 
-            mat_w = MPSMatrix::initWithBuffer_descriptor(mat, &buf_input_w, &desc);
-        }
-        //dbg!(&mat_w);
+        mat_w = MPSMatrix::initWithBuffer_descriptor(mat, &buf_input_w, &desc);
+    }
+    //dbg!(&mat_w);
 
-        let mat_x;
-        unsafe {
-            let mat = MPSMatrix::alloc();
-            let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-                dim_k as NSUInteger,
-                dim_n as NSUInteger,
-                dim_n * size_of::<f32>() as NSUInteger,
-                MPSDataType::Float32,
-            );
+    let mat_x;
+    unsafe {
+        let mat = MPSMatrix::alloc();
+        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
+            dim_k as NSUInteger,
+            dim_n as NSUInteger,
+            dim_n * size_of::<f32>() as NSUInteger,
+            MPSDataType::Float32,
+        );
 
-            mat_x = MPSMatrix::initWithBuffer_descriptor(mat, &buf_input_x, &desc);
-        }
-        //dbg!(&mat_x);
+        mat_x = MPSMatrix::initWithBuffer_descriptor(mat, &buf_input_x, &desc);
+    }
+    //dbg!(&mat_x);
 
-        let mat_out;
-        unsafe {
-            let mat = MPSMatrix::alloc();
-            let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-                dim_m as NSUInteger,
-                dim_n as NSUInteger,
-                dim_n * size_of::<f32>() as NSUInteger,
-                MPSDataType::Float32,
-            );
+    let mat_out;
+    unsafe {
+        let mat = MPSMatrix::alloc();
+        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
+            dim_m as NSUInteger,
+            dim_n as NSUInteger,
+            dim_n * size_of::<f32>() as NSUInteger,
+            MPSDataType::Float32,
+        );
 
-            mat_out = MPSMatrix::initWithBuffer_descriptor(mat, &buf_out, &desc);
-        }
-        //dbg!(&mat_out);
+        mat_out = MPSMatrix::initWithBuffer_descriptor(mat, &buf_out, &desc);
+    }
+    //dbg!(&mat_out);
 
-        let command_buffer = command_queue.commandBuffer().unwrap();
-        //dbg!(&command_buffer);
-        // no compute encoder, because we don't have our library functions.
-
-        let matmul;
-        unsafe {
-            let matmul_alloc = MPSMatrixMultiplication::alloc();
-            matmul = MPSMatrixMultiplication::initWithDevice_transposeLeft_transposeRight_resultRows_resultColumns_interiorColumns_alpha_beta(
+    let matmul;
+    unsafe {
+        let matmul_alloc = MPSMatrixMultiplication::alloc();
+        matmul = MPSMatrixMultiplication::initWithDevice_transposeLeft_transposeRight_resultRows_resultColumns_interiorColumns_alpha_beta(
             matmul_alloc,
             &device,
             false, // transpose
@@ -132,8 +132,18 @@ fn main() {
             1.0, // alpha, beta
             0.0,
         );
-        };
-        //dbg!(&matmul);
+    };
+    //dbg!(&matmul);
+
+    let start = SystemTime::now();
+    eprintln!("{t} start matmul ", t = elapsed(start));
+    let command_buffer = command_queue.commandBuffer().unwrap();
+    for i in 0..n_repeats {
+        eprint!("\r{i}  ");
+
+        //dbg!(&command_buffer);
+        // no compute encoder, because we don't have our library functions.
+
         unsafe {
             matmul.encodeToCommandBuffer_leftMatrix_rightMatrix_resultMatrix(
                 &command_buffer,
@@ -142,15 +152,20 @@ fn main() {
                 &mat_out,
             );
         }
-        command_buffer.commit();
-        command_buffer.waitUntilCompleted();
         //dbg!(command_buffer.status());
 
         //dbg!(input_w);
         //dbg!(input_x);
         //dbg!(output);
     }
+
+    command_buffer.commit();
+    command_buffer.waitUntilCompleted();
+
+    //---
+
     eprint!("\r");
+    eprintln!("{} finished", elapsed(start));
     let dt = elapsed(start);
     eprintln!(
         "{p} ms per multiplication for dims n={dim_n} k={dim_k} m={dim_m} and {n_repeats} repeats",
