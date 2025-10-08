@@ -1,7 +1,10 @@
 //! Useful references:
 //! - https://github.com/ryan-tobin/rustframes/blob/490be685dcc5252b6eacbf45df65b2f03476ed18/src/array/gpu.rs#L518
 //!
-//! 14.546666 ms per multiplication for dims n=3000 k=3000 m=3000 and 30 repeats
+//!
+//! ms per multiplication for dims n=3000 k=3000 m=3000 and 30 repeats:
+//! 14.546666 ms - all allocations done in the loop
+//! 11.805001 ms - memory allocations (even with shared memory) done outside loop
 use objc2::AnyThread;
 use objc2_foundation::NSUInteger;
 use objc2_metal::{
@@ -32,44 +35,43 @@ fn main() {
     // initial output values matter if beta MPSMatrixMultiplication is != 0 (it's GEMM)
     let output: Vec<f32> = vec![0.; dim_m * dim_n];
 
-    let start = SystemTime::now();
+    let buf_input_w = unsafe {
+        device
+            .newBufferWithBytesNoCopy_length_options_deallocator(
+                input_w.as_c_void(),
+                input_w.len() * size_of::<f32>(),
+                MTLResourceOptions::StorageModeShared,
+                None,
+            )
+            .unwrap()
+    };
 
+    let buf_input_x = unsafe {
+        device
+            .newBufferWithBytesNoCopy_length_options_deallocator(
+                input_x.as_c_void(),
+                input_x.len() * size_of::<f32>(),
+                MTLResourceOptions::StorageModeShared,
+                None,
+            )
+            .unwrap()
+    };
+
+    let buf_out = unsafe {
+        device
+            .newBufferWithBytesNoCopy_length_options_deallocator(
+                output.as_c_void(),
+                output.len() * size_of::<f32>(),
+                MTLResourceOptions::StorageModeShared,
+                None,
+            )
+            .unwrap()
+    };
+
+    let start = SystemTime::now();
     eprintln!("{t} start matmul ", t = elapsed(start));
     for i in 0..n_repeats {
         eprint!("\r{i}  ");
-        let buf_input_w = unsafe {
-            device
-                .newBufferWithBytesNoCopy_length_options_deallocator(
-                    input_w.as_c_void(),
-                    input_w.len() * size_of::<f32>(),
-                    MTLResourceOptions::StorageModeShared,
-                    None,
-                )
-                .unwrap()
-        };
-
-        let buf_input_x = unsafe {
-            device
-                .newBufferWithBytesNoCopy_length_options_deallocator(
-                    input_x.as_c_void(),
-                    input_x.len() * size_of::<f32>(),
-                    MTLResourceOptions::StorageModeShared,
-                    None,
-                )
-                .unwrap()
-        };
-
-        let buf_out = unsafe {
-            device
-                .newBufferWithBytesNoCopy_length_options_deallocator(
-                    output.as_c_void(),
-                    output.len() * size_of::<f32>(),
-                    MTLResourceOptions::StorageModeShared,
-                    None,
-                )
-                .unwrap()
-        };
-
         let mat_w;
         unsafe {
             let mat = MPSMatrix::alloc();
