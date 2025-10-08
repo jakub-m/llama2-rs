@@ -4,14 +4,12 @@
 //!
 //! For Metal, the benchamrk is:
 //!
-//! ms per multiplication for dims n=3000 k=3000 m=3000 and 30 repeats:
-//! - 14.5 ms - all allocations done in the loop
-//! - 11.8 ms - memory allocations (even with shared memory) done outside loop
-//! - 11.9 ms - initialising matrices done outside loop
-//! - 11.0 ms - comitting at the end of the loop
-//!
 //! ms per multiplication for dims n=1 k=1000 m=1000000 and 30 repeats
-//! 80.28104
+//! - 80.2 -- CPU
+//! - 179.6 -- GPU, configure shared memory buffers in each iteration
+//! - 71.5 -- GPU, allocate buf. once, set matrix in each iteration
+//! - 73.1 -- GPU, allocate buf. once, commit after each command
+//! - 73.1 -- GPU, allocate buf. once, commit after all the loops  (frees CPU from waiting)
 
 use llama2_rs::matmul::matmul;
 use objc2::AnyThread;
@@ -49,17 +47,7 @@ fn main() {
     let start = SystemTime::now();
     eprintln!("{t} start matmul ", t = elapsed(start));
 
-    //run_matmul_metal(
-    //    n_repeats,
-    //    &mut output,
-    //    &input_w,
-    //    &input_x,
-    //    dim_m,
-    //    dim_k,
-    //    dim_n,
-    //);
-
-    run_matmul_cpu(
+    run_matmul_metal(
         n_repeats,
         &mut output,
         &input_w,
@@ -68,6 +56,16 @@ fn main() {
         dim_k,
         dim_n,
     );
+
+    //run_matmul_cpu(
+    //    n_repeats,
+    //    &mut output,
+    //    &input_w,
+    //    &input_x,
+    //    dim_m,
+    //    dim_k,
+    //    dim_n,
+    //);
 
     //---
 
@@ -185,9 +183,10 @@ fn run_matmul_metal(
     };
     //dbg!(&matmul);
 
-    let command_buffer = command_queue.commandBuffer().unwrap();
     for i in 0..n_repeats {
         eprint!("\rmetal {i}  ");
+
+        let command_buffer = command_queue.commandBuffer().unwrap();
 
         //dbg!(&command_buffer);
         // no compute encoder, because we don't have our library functions.
@@ -205,10 +204,9 @@ fn run_matmul_metal(
         //dbg!(input_w);
         //dbg!(input_x);
         //dbg!(output);
+        command_buffer.commit();
+        command_buffer.waitUntilCompleted();
     }
-
-    command_buffer.commit();
-    command_buffer.waitUntilCompleted();
 }
 
 fn run_matmul_cpu(
