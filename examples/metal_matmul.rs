@@ -9,6 +9,9 @@
 //! - 11.8 ms - memory allocations (even with shared memory) done outside loop
 //! - 11.9 ms - initialising matrices done outside loop
 //! - 11.0 ms - comitting at the end of the loop
+//!
+//! ms per multiplication for dims n=1 k=1000 m=1000000 and 30 repeats
+//! 80.28104
 
 use llama2_rs::matmul::matmul;
 use objc2::AnyThread;
@@ -34,9 +37,9 @@ fn main() {
     // m 4 5 6  x   k 3 4  =    m 49 64
     // m 7 8 9      k 5 6       m 76 100
 
-    let dim_m: usize = 3_000;
-    let dim_k: usize = 3_000;
-    let dim_n: usize = 3_000;
+    let dim_m: usize = 1_000_000;
+    let dim_k: usize = 1_000;
+    let dim_n: usize = 1;
 
     let input_w: Vec<f32> = init_vec(dim_m * dim_k);
     let input_x: Vec<f32> = init_vec(dim_k * dim_n);
@@ -46,7 +49,17 @@ fn main() {
     let start = SystemTime::now();
     eprintln!("{t} start matmul ", t = elapsed(start));
 
-    run_matmul_metal(
+    //run_matmul_metal(
+    //    n_repeats,
+    //    &mut output,
+    //    &input_w,
+    //    &input_x,
+    //    dim_m,
+    //    dim_k,
+    //    dim_n,
+    //);
+
+    run_matmul_cpu(
         n_repeats,
         &mut output,
         &input_w,
@@ -174,7 +187,7 @@ fn run_matmul_metal(
 
     let command_buffer = command_queue.commandBuffer().unwrap();
     for i in 0..n_repeats {
-        eprint!("\r{i}  ");
+        eprint!("\rmetal {i}  ");
 
         //dbg!(&command_buffer);
         // no compute encoder, because we don't have our library functions.
@@ -196,6 +209,22 @@ fn run_matmul_metal(
 
     command_buffer.commit();
     command_buffer.waitUntilCompleted();
+}
+
+fn run_matmul_cpu(
+    n_repeats: usize,
+    output: &mut [f32],
+    input_w: &[f32],
+    input_x: &[f32],
+    dim_m: usize,
+    dim_k: usize,
+    dim_n: usize,
+) {
+    assert_eq!(dim_n, 1);
+    for i in 0..n_repeats {
+        eprint!("\rcpu {i}  ");
+        llama2_rs::matmul::matmul(output, input_x, input_w, dim_k, dim_m);
+    }
 }
 
 trait AsNonNull {
