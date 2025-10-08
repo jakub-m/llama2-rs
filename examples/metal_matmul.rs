@@ -2,11 +2,15 @@
 //! - https://github.com/ryan-tobin/rustframes/blob/490be685dcc5252b6eacbf45df65b2f03476ed18/src/array/gpu.rs#L518
 //!
 //!
+//! For Metal, the benchamrk is:
+//!
 //! ms per multiplication for dims n=3000 k=3000 m=3000 and 30 repeats:
-//! 14.5 ms - all allocations done in the loop
-//! 11.8 ms - memory allocations (even with shared memory) done outside loop
-//! 11.9 ms - initialising matrices done outside loop
-//! 11.0 ms - comitting at the end of the loop
+//! - 14.5 ms - all allocations done in the loop
+//! - 11.8 ms - memory allocations (even with shared memory) done outside loop
+//! - 11.9 ms - initialising matrices done outside loop
+//! - 11.0 ms - comitting at the end of the loop
+
+use llama2_rs::matmul::matmul;
 use objc2::AnyThread;
 use objc2_foundation::NSUInteger;
 use objc2_metal::{
@@ -25,10 +29,6 @@ fn main() {
         eprintln!("(Device {j}: {d:?})", j = i + 1);
     }
 
-    let device = MTLCreateSystemDefaultDevice().unwrap();
-    eprintln!("{device:?}");
-    let command_queue = device.newCommandQueue().unwrap();
-
     //   kkkkk        nnn         nnnnn
     // m 1 2 3      k 1 2       m 22 28
     // m 4 5 6  x   k 3 4  =    m 49 64
@@ -41,7 +41,44 @@ fn main() {
     let input_w: Vec<f32> = init_vec(dim_m * dim_k);
     let input_x: Vec<f32> = init_vec(dim_k * dim_n);
     // initial output values matter if beta MPSMatrixMultiplication is != 0 (it's GEMM)
-    let output: Vec<f32> = vec![0.; dim_m * dim_n];
+    let mut output: Vec<f32> = vec![0.; dim_m * dim_n];
+
+    let start = SystemTime::now();
+    eprintln!("{t} start matmul ", t = elapsed(start));
+
+    run_matmul_metal(
+        n_repeats,
+        &mut output,
+        &input_w,
+        &input_x,
+        dim_m,
+        dim_k,
+        dim_n,
+    );
+
+    //---
+
+    eprint!("\r");
+    eprintln!("{} finished", elapsed(start));
+    let dt = elapsed(start);
+    eprintln!(
+        "{p} ms per multiplication for dims n={dim_n} k={dim_k} m={dim_m} and {n_repeats} repeats",
+        p = 1000. * dt / n_repeats as f32
+    );
+}
+
+fn run_matmul_metal(
+    n_repeats: usize,
+    output: &mut [f32],
+    input_w: &[f32],
+    input_x: &[f32],
+    dim_m: usize,
+    dim_k: usize,
+    dim_n: usize,
+) {
+    let device = MTLCreateSystemDefaultDevice().unwrap();
+    eprintln!("{device:?}");
+    let command_queue = device.newCommandQueue().unwrap();
 
     let buf_input_w = unsafe {
         device
@@ -135,8 +172,6 @@ fn main() {
     };
     //dbg!(&matmul);
 
-    let start = SystemTime::now();
-    eprintln!("{t} start matmul ", t = elapsed(start));
     let command_buffer = command_queue.commandBuffer().unwrap();
     for i in 0..n_repeats {
         eprint!("\r{i}  ");
@@ -161,16 +196,6 @@ fn main() {
 
     command_buffer.commit();
     command_buffer.waitUntilCompleted();
-
-    //---
-
-    eprint!("\r");
-    eprintln!("{} finished", elapsed(start));
-    let dt = elapsed(start);
-    eprintln!(
-        "{p} ms per multiplication for dims n={dim_n} k={dim_k} m={dim_m} and {n_repeats} repeats",
-        p = 1000. * dt / n_repeats as f32
-    );
 }
 
 trait AsNonNull {
@@ -184,6 +209,13 @@ impl<T> AsNonNull for Vec<T> {
 }
 
 impl<T> AsNonNull for &[T] {
+    fn as_c_void(&self) -> NonNull<c_void> {
+        let ptr = self.as_ptr() as *mut c_void;
+        NonNull::new(ptr).unwrap()
+    }
+}
+
+impl<T> AsNonNull for &mut [T] {
     fn as_c_void(&self) -> NonNull<c_void> {
         let ptr = self.as_ptr() as *mut c_void;
         NonNull::new(ptr).unwrap()
