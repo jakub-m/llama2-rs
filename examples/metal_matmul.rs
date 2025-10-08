@@ -4,12 +4,19 @@
 //!
 //! For Metal, the benchamrk is:
 //!
-//! ms per multiplication for dims n=1 k=1000 m=1000000 and 30 repeats
-//! - 80.2 -- CPU
+//! ms per multiplication for dims n=1 k=1000 m=1000000 and 30 repeats.
+//! Note that those dimensions mean 1GB W matrix.
+//!
+//! - 80.2 -- CPU (rayon)
 //! - 179.6 -- GPU, configure shared memory buffers in each iteration
 //! - 71.5 -- GPU, allocate buf. once, set matrix in each iteration
 //! - 73.1 -- GPU, allocate buf. once, commit after each command
 //! - 73.1 -- GPU, allocate buf. once, commit after all the loops  (frees CPU from waiting)
+//!
+//!
+//! For a square W matrix, and larger output vector k=31623 m=31623 and 30 repeats
+//! - 111.0156 ms GPU
+//! - 88.0205 ms CPU (rayon)
 
 use llama2_rs::matmul::matmul;
 use objc2::AnyThread;
@@ -35,8 +42,10 @@ fn main() {
     // m 4 5 6  x   k 3 4  =    m 49 64
     // m 7 8 9      k 5 6       m 76 100
 
-    let dim_m: usize = 1_000_000;
-    let dim_k: usize = 1_000;
+    //let dim_m: usize = 1_000_000;
+    //let dim_k: usize = 1_000;
+    let dim_m: usize = 31623;
+    let dim_k: usize = 31623;
     let dim_n: usize = 1;
 
     let input_w: Vec<f32> = init_vec(dim_m * dim_k);
@@ -47,17 +56,7 @@ fn main() {
     let start = SystemTime::now();
     eprintln!("{t} start matmul ", t = elapsed(start));
 
-    run_matmul_metal(
-        n_repeats,
-        &mut output,
-        &input_w,
-        &input_x,
-        dim_m,
-        dim_k,
-        dim_n,
-    );
-
-    //run_matmul_cpu(
+    //run_matmul_metal(
     //    n_repeats,
     //    &mut output,
     //    &input_w,
@@ -66,6 +65,16 @@ fn main() {
     //    dim_k,
     //    dim_n,
     //);
+
+    run_matmul_cpu(
+        n_repeats,
+        &mut output,
+        &input_w,
+        &input_x,
+        dim_m,
+        dim_k,
+        dim_n,
+    );
 
     //---
 
@@ -99,7 +108,7 @@ fn run_matmul_metal(
                 MTLResourceOptions::StorageModeShared,
                 None,
             )
-            .unwrap()
+            .expect("expected configured shared W")
     };
 
     let buf_input_x = unsafe {
