@@ -36,10 +36,15 @@ build-release:
 	RUSTFLAGS="-C debuginfo=2" cargo build --release
 
 run-tinystories:
-	cargo run --release --  ../llama2.c/stories42M.bin   -z ../llama2.c/tokenizer.bin -s 0 -i 'once there was a stone. '
+	cargo run --release -- ../llama2.c/stories42M.bin -z ../llama2.c/tokenizer.bin -s 0 -i 'once there was a stone. '
+
+instruments-tinystories:
+	rm -rf *.trace || true
+	# cargo instruments --time-limit 10000 --release -t "CPU Profiler" --output tinystories-cpuprof.trace -- ../llama2.c/stories42M.bin -z ../llama2.c/tokenizer.bin -s 0 -i 'once there was a stone. '
+	cargo instruments --time-limit 10000 -t "Metal System Trace" --output tinystories-metal.trace -- ../llama2.c/stories42M.bin -z ../llama2.c/tokenizer.bin -s 0 -i 'once there was a stone. '
 
 objdump-llama:
-	cargo objdump --release --bin llama2-rs -- --disassemble --line-numbers  --source ${PWD}/target/release/llama2-rs
+	cargo objdump --release --bin llama2-rs -- --disassemble --line-numbers --source ${PWD}/target/release/llama2-rs
 
 objdump-rayon:
 	cargo objdump --release --example rayon -- --disassemble --line-numbers --source ${PWD}/target/release/examples/rayon
