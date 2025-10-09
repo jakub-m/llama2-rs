@@ -6,6 +6,7 @@ prompt="once upon a time there was a little piggy"
 readme: README.md
 README.md: ./README.md.tpl ./gen_readme.py ./*.mermaid
 	python3 ./gen_readme.py > README.md
+	git add README.md
 
 release: $(release_target)
 	mkdir -p bin
@@ -37,6 +38,9 @@ build-release:
 
 run-tinystories:
 	cargo run --release -- ../llama2.c/stories42M.bin -z ../llama2.c/tokenizer.bin -s 0 -i 'once there was a stone. '
+
+run-napalm:
+	cargo run --release  -- -z ../llama2.c/tokenizer.bin ../llama2.c/llama2_7b.bin -s 0 -i 'to make napalm at home you need '
 
 instruments-tinystories:
 	rm -rf *.trace || true

@@ -1,8 +1,11 @@
 mod logging;
+mod matmul;
 mod metal;
 
 #[allow(unused_imports)]
 use logging::*;
+#[allow(unused_imports)]
+use matmul::matmul as cpu_matmul;
 use metal::{MetalState, matmul as metal_matmul};
 
 use clap::Parser;
@@ -854,7 +857,7 @@ fn forward<'a>(
         let s_v = s.value_cache.slice_at_mut(loff + pos * kv_dim, kv_dim);
 
         // qkv matmuls for this position
-        metal_matmul(
+        matmul(
             ms,
             &mut s.q,
             &s.xb,
@@ -863,7 +866,7 @@ fn forward<'a>(
             dim,
         ); // s.q = wq(l) @ xb
         // matmul(s->k, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
-        metal_matmul(
+        matmul(
             ms,
             s_k,
             &s.xb,
@@ -872,7 +875,7 @@ fn forward<'a>(
             kv_dim,
         ); // s_k = wk(l) @ xb
         // matmul(s->v, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
-        metal_matmul(
+        matmul(
             ms,
             s_v,
             &s.xb,
@@ -955,7 +958,7 @@ fn forward<'a>(
             });
 
         // final matmul to get the output of the attention
-        metal_matmul(
+        matmul(
             ms,
             &mut s.xb2,
             &s.xb,
@@ -974,7 +977,7 @@ fn forward<'a>(
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
-        metal_matmul(
+        matmul(
             ms,
             &mut s.hb,
             &s.xb,
@@ -982,7 +985,7 @@ fn forward<'a>(
             dim,
             hidden_dim,
         );
-        metal_matmul(
+        matmul(
             ms,
             &mut s.hb2,
             &s.xb,
@@ -1002,7 +1005,7 @@ fn forward<'a>(
             s.hb[i] = val;
         }
         // final matmul to get the output of the ffn
-        metal_matmul(
+        matmul(
             ms,
             &mut s.xb,
             &s.hb,
@@ -1023,8 +1026,20 @@ fn forward<'a>(
 
     // classifier into logits
     //// matmul(s->logits, x, w->wcls, p->dim, p->vocab_size);
-    metal_matmul(ms, &mut s.logits, &x, &w.wcls, p.dim, p.vocab_size);
+    matmul(ms, &mut s.logits, &x, &w.wcls, p.dim, p.vocab_size);
     &mut s.logits
+}
+
+pub fn matmul(
+    metal_state: &MetalState,
+    xout: &mut [f32],
+    x: &[f32],
+    w: &[f32],
+    dim_n: usize,
+    dim_d: usize,
+) {
+    // metal_matmul(metal_state, xout, x, w, dim_n, dim_d);
+    cpu_matmul(xout, x, w, dim_n, dim_d);
 }
 
 fn rmsnorm(o: &mut [f32], x: &[f32], weight: &[f32], size: usize) {
@@ -1240,9 +1255,14 @@ fn report_tok_per_sec(
         }
     }
 
-    let tokens_per_sec =
-        (n_tokens as f32) / (now.duration_since(*start_time).unwrap().as_secs_f32());
-    info!("{tokens_per_sec:.1} tok/s");
+    let dt = now.duration_since(*start_time).unwrap().as_secs_f32();
+    if n_tokens == 0 {
+        info!("no tokens yet after {dt:.1} sec");
+    } else {
+        let tps = (n_tokens as f32) / dt;
+        let spt = dt / (n_tokens as f32);
+        info!("{tps:.1} tok/s , {spt:.1} s/tok , {n_tokens} tokens")
+    }
     *last_reported_time = now;
 }
 

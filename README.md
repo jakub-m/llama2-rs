@@ -293,6 +293,21 @@ make objdump-llama | egrep '^000| \tf' | grep llama2_rs -A1
 
 # Metal
 
-- [examples/metal_add.rs](examples/metal_add.rs) implements a simple addition in GPU using a shared memory buffer.
-- [examples/metal_matmul.rs](examples/metal_matmul.rs) runs matrix multiplication on GPU.
+- [metal_add.rs](examples/metal_add.rs) implements a simple addition in GPU using a shared memory buffer.
+- [metal_matmul.rs](examples/metal_matmul.rs) runs matrix multiplication on GPU.
+
+Running llama2 (`make run-napalm`) with matmul naively computed in GPU (shared
+memory buffers, Metal native matmul) yields ~20% GPU utilization, and ~60
+seconds per token. For CPU with Rayon, it's ~20 sec per token.
+
+# Next steps
+
+- GPU: Use private GPU memory for W matrices that don't change. Check first
+  with benchamrking if this gives better yield.
+
+- Pipelining of GPU work, do not wait until finished, carry on in parallel when
+  possible.
+
+- Run comput. in GPU and CPU at once (2x yield!)
+
 
