@@ -56,17 +56,7 @@ fn main() {
     let start = SystemTime::now();
     eprintln!("{t} start matmul ", t = elapsed(start));
 
-    //run_matmul_metal(
-    //    n_repeats,
-    //    &mut output,
-    //    &input_w,
-    //    &input_x,
-    //    dim_m,
-    //    dim_k,
-    //    dim_n,
-    //);
-
-    run_matmul_cpu(
+    run_matmul_metal(
         n_repeats,
         &mut output,
         &input_w,
@@ -75,6 +65,16 @@ fn main() {
         dim_k,
         dim_n,
     );
+
+    //run_matmul_cpu(
+    //    n_repeats,
+    //    &mut output,
+    //    &input_w,
+    //    &input_x,
+    //    dim_m,
+    //    dim_k,
+    //    dim_n,
+    //);
 
     //---
 
