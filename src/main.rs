@@ -1038,8 +1038,8 @@ pub fn matmul(
     dim_n: usize,
     dim_d: usize,
 ) {
-    // metal_matmul(metal_state, xout, x, w, dim_n, dim_d);
-    cpu_matmul(xout, x, w, dim_n, dim_d);
+    metal_matmul(metal_state, xout, x, w, dim_n, dim_d);
+    // cpu_matmul(xout, x, w, dim_n, dim_d);
 }
 
 fn rmsnorm(o: &mut [f32], x: &[f32], weight: &[f32], size: usize) {

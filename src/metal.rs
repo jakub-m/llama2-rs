@@ -163,7 +163,7 @@ pub fn matmul(
                 false,
                 dim_d,
                 dim_u,
-                dim_n,
+                dim_d,
                 1.0,
                 0.0,
             )
@@ -240,30 +240,4 @@ mod tests {
             ]
         );
     }
-
-    //#[test]
-    //fn test_matmul_large_vector() {
-    //    //matmul xout.len=1376 x.len=512 w.len=704512
-    //    // W (d,n) @ x (n,) -> xout (d,)
-    //    let dim_n: usize = 512;
-    //    let dim_d: usize = 1376;
-
-    //    let mut input_w = vec![0_f32; dim_n * dim_d];
-
-    //    for i_d in 0..dim_d {
-    //        for i_n in 0..dim_n {
-    //            input_w[i_n + dim_n * i_d] = 0.01 * i_n as f32 + 1. * i_d as f32;
-    //        }
-    //    }
-
-    //    let mut input_x = vec![0_f32; dim_n];
-    //    for i in 0..dim_n {
-    //        input_x[i] = 0.001 * i as f32;
-    //    }
-
-    //    let mut output = vec![0_f32; dim_d];
-
-    //    let ms = MetalState::new();
-    //    matmul(&ms, &mut output, &input_x, &input_w, dim_n, dim_d);
-    //}
 }

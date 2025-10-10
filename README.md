@@ -310,4 +310,4 @@ seconds per token. For CPU with Rayon, it's ~20 sec per token.
 
 - Run comput. in GPU and CPU at once (2x yield!)
 
-
+- Dynamic quantization, to f16 or int

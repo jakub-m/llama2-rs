@@ -127,6 +127,8 @@ seconds per token. For CPU with Rayon, it's ~20 sec per token.
 
 - GPU: Use private GPU memory for W matrices that don't change. Check first
   with benchamrking if this gives better yield.
+    - https://developer.apple.com/documentation/metal/choosing-a-resource-storage-mode-for-apple-gpus
+    - https://developer.apple.com/library/archive/documentation/3DDrawing/Conceptual/MTLBestPracticesGuide/ResourceOptions.html
 
 - Pipelining of GPU work, do not wait until finished, carry on in parallel when
   possible.
