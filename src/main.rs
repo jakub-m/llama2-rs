@@ -1,11 +1,13 @@
 mod logging;
 mod matmul;
 mod metal;
+mod sliceutil;
 
 #[allow(unused_imports)]
 use logging::*;
 #[allow(unused_imports)]
 use matmul::matmul as cpu_matmul;
+#[allow(unused_imports)]
 use metal::{MetalState, matmul as metal_matmul};
 
 use clap::Parser;
@@ -21,6 +23,8 @@ use std::{
     thread::available_parallelism,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+use sliceutil::{Offset, SliceFromOffset};
 
 #[derive(Clone)]
 struct TokenIndex {
@@ -857,29 +861,32 @@ fn forward<'a>(
         let s_v = s.value_cache.slice_at_mut(loff + pos * kv_dim, kv_dim);
 
         // qkv matmuls for this position
-        matmul(
+        matmul_offset(
             ms,
             &mut s.q,
             &s.xb,
-            &w.wq.slice_at_elem(l, dim * dim),
+            &w.wq,
+            Offset::at_elem(l, dim * dim),
             dim,
             dim,
         ); // s.q = wq(l) @ xb
         // matmul(s->k, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
-        matmul(
+        matmul_offset(
             ms,
             s_k,
             &s.xb,
-            &w.wk.slice_at_elem(l, dim * kv_dim),
+            &w.wk,
+            Offset::at_elem(l, dim * kv_dim),
             dim,
             kv_dim,
         ); // s_k = wk(l) @ xb
         // matmul(s->v, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
-        matmul(
+        matmul_offset(
             ms,
             s_v,
             &s.xb,
-            &w.wv.slice_at_elem(l, dim * kv_dim),
+            &w.wv,
+            Offset::at_elem(l, dim * kv_dim),
             dim,
             kv_dim,
         ); // s_v = wv(l) @ xb
@@ -958,11 +965,12 @@ fn forward<'a>(
             });
 
         // final matmul to get the output of the attention
-        matmul(
+        matmul_offset(
             ms,
             &mut s.xb2,
             &s.xb,
-            &w.wo.slice_at_elem(l, dim * dim),
+            &w.wo,
+            Offset::at_elem(l, dim * dim),
             dim,
             dim,
         );
@@ -977,20 +985,21 @@ fn forward<'a>(
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
-        matmul(
+        matmul_offset(
             ms,
             &mut s.hb,
             &s.xb,
-            &w.w1.slice_at_elem(l, dim * hidden_dim), //[l * dim * hidden_dim..],
+            &w.w1,
+            Offset::at_elem(l, dim * hidden_dim), //[l * dim * hidden_dim..],
             dim,
             hidden_dim,
         );
-        matmul(
+        matmul_offset(
             ms,
             &mut s.hb2,
             &s.xb,
-            //&w.w3[l * dim * hidden_dim..],
-            &w.w3.slice_at_elem(l, dim * hidden_dim),
+            &w.w3,
+            Offset::at_elem(l, dim * hidden_dim),
             dim,
             hidden_dim,
         );
@@ -1005,12 +1014,12 @@ fn forward<'a>(
             s.hb[i] = val;
         }
         // final matmul to get the output of the ffn
-        matmul(
+        matmul_offset(
             ms,
             &mut s.xb,
             &s.hb,
-            //&w.w2[l * dim * hidden_dim..],
-            &w.w2.slice_at_elem(l, dim * hidden_dim),
+            &w.w2,
+            Offset::at_elem(l, dim * hidden_dim),
             hidden_dim,
             dim,
         );
@@ -1026,7 +1035,15 @@ fn forward<'a>(
 
     // classifier into logits
     //// matmul(s->logits, x, w->wcls, p->dim, p->vocab_size);
-    matmul(ms, &mut s.logits, &x, &w.wcls, p.dim, p.vocab_size);
+    matmul_offset(
+        ms,
+        &mut s.logits,
+        &x,
+        &w.wcls,
+        Offset::at_elem(0, w.wcls.len()),
+        p.dim,
+        p.vocab_size,
+    );
     &mut s.logits
 }
 
@@ -1038,8 +1055,20 @@ pub fn matmul(
     dim_n: usize,
     dim_d: usize,
 ) {
-    metal_matmul(metal_state, xout, x, w, dim_n, dim_d);
-    // cpu_matmul(xout, x, w, dim_n, dim_d);
+    // metal_matmul(metal_state, xout, x, w, dim_n, dim_d);
+    cpu_matmul(xout, x, w, dim_n, dim_d);
+}
+
+pub fn matmul_offset(
+    metal_state: &MetalState,
+    xout: &mut [f32],
+    x: &[f32],
+    w_full: &[f32],
+    w_offset: Offset,
+    dim_n: usize,
+    dim_d: usize,
+) {
+    cpu_matmul(xout, x, w_full.slice_from_offset(w_offset), dim_n, dim_d);
 }
 
 fn rmsnorm(o: &mut [f32], x: &[f32], weight: &[f32], size: usize) {
