@@ -18,22 +18,44 @@ pub struct MetalState {
     // whole mtl buffer
     pub mtl_buffer_wq: Retained<ProtocolObject<dyn MTLBuffer>>,
     pub mtl_buffer_wk: Retained<ProtocolObject<dyn MTLBuffer>>,
+    pub mtl_buffer_wv: Retained<ProtocolObject<dyn MTLBuffer>>,
+    pub mtl_buffer_wo: Retained<ProtocolObject<dyn MTLBuffer>>,
+    pub mtl_buffer_w1: Retained<ProtocolObject<dyn MTLBuffer>>,
+    pub mtl_buffer_w2: Retained<ProtocolObject<dyn MTLBuffer>>,
+    pub mtl_buffer_w3: Retained<ProtocolObject<dyn MTLBuffer>>,
 }
 
 impl MetalState {
-    pub fn new(wq: &[f32], wk: &[f32]) -> Self {
+    pub fn new(
+        wq: &[f32],
+        wk: &[f32],
+        wv: &[f32],
+        wo: &[f32],
+        w1: &[f32],
+        w2: &[f32],
+        w3: &[f32],
+    ) -> Self {
         let device: Retained<ProtocolObject<dyn MTLDevice>> =
             MTLCreateSystemDefaultDevice().unwrap();
         let command_queue = device.newCommandQueue().unwrap();
 
         let mtl_buffer_wq = unsafe { Self::new_mtl_buffer(&device, wq) };
         let mtl_buffer_wk = unsafe { Self::new_mtl_buffer(&device, wk) };
-
+        let mtl_buffer_wv = unsafe { Self::new_mtl_buffer(&device, wv) };
+        let mtl_buffer_wo = unsafe { Self::new_mtl_buffer(&device, wo) };
+        let mtl_buffer_w1 = unsafe { Self::new_mtl_buffer(&device, w1) };
+        let mtl_buffer_w2 = unsafe { Self::new_mtl_buffer(&device, w2) };
+        let mtl_buffer_w3 = unsafe { Self::new_mtl_buffer(&device, w3) };
         MetalState {
             device,
             command_queue,
             mtl_buffer_wq,
             mtl_buffer_wk,
+            mtl_buffer_wv,
+            mtl_buffer_wo,
+            mtl_buffer_w1,
+            mtl_buffer_w2,
+            mtl_buffer_w3,
         }
     }
 

@@ -544,7 +544,9 @@ struct MatmulState<'a> {
 
 impl<'a> MatmulState<'a> {
     fn new(weights: &'a TransformerWeights<'a>) -> MatmulState<'a> {
-        let metal_state = MetalState::new(weights.wq, weights.wk);
+        let metal_state = MetalState::new(
+            weights.wq, weights.wk, weights.wv, weights.wo, weights.w1, weights.w2, weights.w3,
+        );
         MatmulState {
             metal_state,
             weights,
@@ -567,6 +569,11 @@ impl<'a> WithMetalBuf<BufferSelector> for MatmulState<'a> {
         match b_sel {
             BufferSelector::Wq => Some(&ms.mtl_buffer_wq),
             BufferSelector::Wk => Some(&ms.mtl_buffer_wk),
+            BufferSelector::Wv => Some(&ms.mtl_buffer_wv),
+            BufferSelector::Wo => Some(&ms.mtl_buffer_wo),
+            BufferSelector::W1 => Some(&ms.mtl_buffer_w1),
+            BufferSelector::W2 => Some(&ms.mtl_buffer_w2),
+            BufferSelector::W3 => Some(&ms.mtl_buffer_w3),
         }
     }
 }
@@ -576,6 +583,11 @@ impl<'a> WithMetalBuf<BufferSelector> for MatmulState<'a> {
 enum BufferSelector {
     Wq,
     Wk,
+    Wv,
+    Wo,
+    W1,
+    W2,
+    W3,
 }
 
 impl<'a> WithBufferRef<BufferSelector> for MatmulState<'a> {
@@ -583,6 +595,11 @@ impl<'a> WithBufferRef<BufferSelector> for MatmulState<'a> {
         match b_sel {
             BufferSelector::Wq => self.weights.wq,
             BufferSelector::Wk => self.weights.wk,
+            BufferSelector::Wv => self.weights.wv,
+            BufferSelector::Wo => self.weights.wo,
+            BufferSelector::W1 => self.weights.w1,
+            BufferSelector::W2 => self.weights.w2,
+            BufferSelector::W3 => self.weights.w3,
         }
     }
 }
