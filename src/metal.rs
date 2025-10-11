@@ -116,7 +116,6 @@ pub fn matmul_s<S: WithBufferRef<B> + WithMetalBuf<B> + WithMetalState, B: Copy>
     let buf_w_holder;
     let buf_w = if let Some(mb) = state.metal_buffer(w_sel) {
         // TODO add some check if dim_n * dim_d is the actual size of the whole w?
-        panic!("has buffer");
         mb
     } else {
         //assert_eq!(dim_n * dim_d, w_ref_with_offset.len());

@@ -564,11 +564,9 @@ impl<'a> WithMetalBuf<BufferSelector> for MatmulState<'a> {
         b_sel: BufferSelector,
     ) -> Option<&Retained<ProtocolObject<dyn MTLBuffer>>> {
         let ms = self.metal_state();
-        None
-        // TODO uncomment to return the initialized buffer
-        // match b_sel {
-        //     BufferSelector::Wq => Some(&ms.mtl_buffer_wq),
-        // }
+        match b_sel {
+            BufferSelector::Wq => Some(&ms.mtl_buffer_wq),
+        }
     }
 }
 
