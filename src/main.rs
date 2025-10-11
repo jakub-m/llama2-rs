@@ -954,11 +954,11 @@ fn forward<'a>(
             kv_dim,
         ); // s_k = wk(l) @ xb
         // matmul(s->v, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
-        matmul_offset(
-            ms,
+        matmul_s(
+            mms,
             s_v,
             &s.xb,
-            &w.wv,
+            BufferSelector::Wv,
             Offset::at_elem(l, dim * kv_dim),
             dim,
             kv_dim,
@@ -1038,11 +1038,11 @@ fn forward<'a>(
             });
 
         // final matmul to get the output of the attention
-        matmul_offset(
-            ms,
+        matmul_s(
+            mms,
             &mut s.xb2,
             &s.xb,
-            &w.wo,
+            BufferSelector::Wo,
             Offset::at_elem(l, dim * dim),
             dim,
             dim,
