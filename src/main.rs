@@ -544,7 +544,7 @@ struct MatmulState<'a> {
 
 impl<'a> MatmulState<'a> {
     fn new(weights: &'a TransformerWeights<'a>) -> MatmulState<'a> {
-        let metal_state = MetalState::new();
+        let metal_state = MetalState::new(weights.wq);
         MatmulState {
             metal_state,
             weights,
@@ -563,7 +563,12 @@ impl<'a> WithMetalBuf<BufferSelector> for MatmulState<'a> {
         &self,
         b_sel: BufferSelector,
     ) -> Option<&Retained<ProtocolObject<dyn MTLBuffer>>> {
-        todo!()
+        let ms = self.metal_state();
+        None
+        // TODO uncomment to return the initialized buffer
+        // match b_sel {
+        //     BufferSelector::Wq => Some(&ms.mtl_buffer_wq),
+        // }
     }
 }
 

@@ -1,8 +1,9 @@
-/// Offset helps to address a sub-matrix, consistenly for CPU and GPU matrices.
+/// Offset helps to address a sub-matrix, consistenly for CPU and GPU matrices. The offset is not
+/// byte offset but number of elements (so, number of f32 or f16 primitives).
 #[derive(Clone, Copy, Debug)]
 pub struct Offset {
-    start: usize,
-    end: usize,
+    pub start: usize,
+    pub end: usize,
 }
 
 impl Offset {

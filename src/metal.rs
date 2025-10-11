@@ -15,16 +15,31 @@ use std::{ffi::c_void, ptr::NonNull};
 pub struct MetalState {
     device: Retained<ProtocolObject<dyn MTLDevice>>,
     command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
+    // whole mtl buffer
+    pub mtl_buffer_wq: Retained<ProtocolObject<dyn MTLBuffer>>,
 }
 
 impl MetalState {
-    pub fn new() -> MetalState {
+    pub fn new(wq: &[f32]) -> MetalState {
         let device: objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn MTLDevice>> =
             MTLCreateSystemDefaultDevice().unwrap();
         let command_queue = device.newCommandQueue().unwrap();
+
+        let mtl_buffer_wq = unsafe {
+            device
+                .newBufferWithBytesNoCopy_length_options_deallocator(
+                    wq.as_c_void(),
+                    wq.len() * size_of::<f32>(),
+                    MTLResourceOptions::StorageModeShared, // TODO here initialize private
+                    None,
+                )
+                .unwrap()
+        };
+
         MetalState {
             device,
             command_queue,
+            mtl_buffer_wq,
         }
     }
 }
@@ -86,30 +101,31 @@ pub fn matmul_s<S: WithBufferRef<B> + WithMetalBuf<B> + WithMetalState, B: Copy>
 ) {
     let dim_u = 1;
 
-    let w: &[f32] = state.buffer_ref(w_sel);
-    let w = w.slice_from_offset(w_offset);
+    let w_ref_full: &[f32] = state.buffer_ref(w_sel);
 
     // Declare shared buffers. The memory is already allocaded in the main code, here we say to
     // share the allocated memory with GPU.
-    assert_eq!(
-        w.len(),
-        dim_n * dim_d,
-        "w.len() ({w_len}) != n * d ({dim_n} * {dim_d})",
-        w_len = w.len(),
-    );
+    //assert_eq!(
+    //    w_ref_with_offset.len(),
+    //    dim_n * dim_d,
+    //    "w.len() ({w_len}) != n * d ({dim_n} * {dim_d})",
+    //    w_len = w_ref_with_offset.len(),
+    //);
     let metal_state = state.metal_state();
 
     let buf_w_holder;
     let buf_w = if let Some(mb) = state.metal_buffer(w_sel) {
-        panic!("has buffer!");
+        // TODO add some check if dim_n * dim_d is the actual size of the whole w?
+        panic!("has buffer");
         mb
     } else {
+        //assert_eq!(dim_n * dim_d, w_ref_with_offset.len());
         let o = unsafe {
             metal_state
                 .device
                 .newBufferWithBytesNoCopy_length_options_deallocator(
-                    w.as_c_void(),
-                    dim_n * dim_d * size_of::<f32>(),
+                    w_ref_full.as_c_void(),
+                    w_ref_full.len() * size_of::<f32>(),
                     MTLResourceOptions::StorageModeShared,
                     None,
                 )
@@ -130,7 +146,13 @@ pub fn matmul_s<S: WithBufferRef<B> + WithMetalBuf<B> + WithMetalState, B: Copy>
             dim_n * size_of::<f32>() as NSUInteger, // stride
             MPSDataType::Float32,
         );
-        mat_w = MPSMatrix::initWithBuffer_descriptor(mat, &buf_w, &desc);
+        //mat_w = MPSMatrix::initWithBuffer_descriptor(mat, &buf_w, &desc);
+        mat_w = MPSMatrix::initWithBuffer_offset_descriptor(
+            mat,
+            &buf_w,
+            w_offset.start * size_of::<f32>(),
+            &desc,
+        );
     };
 
     assert_eq!(
