@@ -1,3 +1,4 @@
+use crate::sliceutil::{Offset, SliceFromOffset};
 use objc2::AnyThread;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
@@ -50,7 +51,36 @@ pub fn matmul(
     dim_n: usize,
     dim_d: usize,
 ) {
+    panic!("bla")
+}
+
+pub trait WithBufferRef<B> {
+    /// Return direct referenct to the particular buffer with weights.
+    fn buffer_ref(&self, b_sel: B) -> &[f32];
+}
+
+pub trait WithMetalState {
+    /// Return state of Metal, which is initialised at the very beginning. This state can also
+    /// contain per-buffer data.
+    fn metal_state(&self) -> &MetalState;
+}
+
+/// State is the state that is needed for efficient operation. This includes: Metal state, shared weight
+/// buffer state. Buffer indicates which buffer (from the state) is used for multiplication.
+/// `w_sel` - selects the buffer from the state.
+pub fn matmul_s<S: WithBufferRef<B> + WithMetalState, B>(
+    state: &S,
+    xout: &mut [f32],
+    x: &[f32],
+    w_sel: B,
+    w_offset: Offset,
+    dim_n: usize,
+    dim_d: usize,
+) {
     let dim_u = 1;
+
+    let w: &[f32] = state.buffer_ref(w_sel);
+    let w = w.slice_from_offset(w_offset);
 
     // Declare shared buffers. The memory is already allocaded in the main code, here we say to
     // share the allocated memory with GPU.
@@ -60,6 +90,7 @@ pub fn matmul(
         "w.len() ({w_len}) != n * d ({dim_n} * {dim_d})",
         w_len = w.len(),
     );
+    let metal_state = state.metal_state();
     let buf_w = unsafe {
         metal_state
             .device
@@ -149,9 +180,6 @@ pub fn matmul(
 
         mat_xout = MPSMatrix::initWithBuffer_descriptor(mat, &buf_xout, &desc);
     }
-    // TODO prepare command buffer only once?
-    // TODO do not prepare commad  buffer if the last operation was the same op. with the same
-    // dims?
     let command_buffer = metal_state.command_queue.commandBuffer().unwrap();
 
     let matmul = unsafe {
@@ -179,11 +207,19 @@ pub fn matmul(
     }
     command_buffer.commit();
     command_buffer.waitUntilCompleted();
-    //dbg!(command_buffer.status());
-    //dbg!(&w);
-    //dbg!(&x);
-    //dbg!(&xout);
 }
+
+//struct MatmulState<'a> {
+//    // The weights in memory (mmaped possibly) for multiplications. Those weights might be copied
+//    // to GPU-private memory.
+//    w: TransformerWeights<'a>,
+//}
+
+///// One of the predefined buffers with weights. The buffer values correspond to particular buffers
+///// in [TransformerWeights].
+//enum MatmulBuffer {
+//    Wq,
+//}
 
 trait AsNonNull {
     fn as_c_void(&self) -> NonNull<c_void>;

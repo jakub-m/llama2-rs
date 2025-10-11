@@ -4,11 +4,12 @@ mod metal;
 mod sliceutil;
 
 #[allow(unused_imports)]
+use llama2_rs::metal::{MetalState, matmul as metal_matmul};
+use llama2_rs::metal::{WithBufferRef, WithMetalState, matmul_s};
+#[allow(unused_imports)]
 use logging::*;
 #[allow(unused_imports)]
 use matmul::matmul as cpu_matmul;
-#[allow(unused_imports)]
-use metal::{MetalState, matmul as metal_matmul};
 
 use clap::Parser;
 use memmap2::{Mmap, MmapOptions};
@@ -24,7 +25,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use sliceutil::{Offset, SliceFromOffset};
+use llama2_rs::sliceutil::{Offset, SliceFromOffset};
 
 #[derive(Clone)]
 struct TokenIndex {
@@ -534,6 +535,40 @@ fn memory_map_weights<'a>(
     }
 }
 
+struct MatmulState<'a> {
+    metal_state: MetalState,
+    weights: &'a TransformerWeights<'a>,
+}
+
+impl<'a> MatmulState<'a> {
+    fn new(weights: &'a TransformerWeights<'a>) -> MatmulState<'a> {
+        let metal_state = MetalState::new();
+        MatmulState {
+            metal_state,
+            weights,
+        }
+    }
+}
+
+impl<'a> WithMetalState for MatmulState<'a> {
+    fn metal_state(&self) -> &MetalState {
+        &self.metal_state
+    }
+}
+
+/// Select particular buffer.
+enum BufferSelector {
+    Wq,
+}
+
+impl<'a> WithBufferRef<BufferSelector> for MatmulState<'a> {
+    fn buffer_ref(&self, b_sel: BufferSelector) -> &[f32] {
+        match b_sel {
+            BufferSelector::Wq => self.weights.wq,
+        }
+    }
+}
+
 /// Utility that returns a subslice and at the same time moves the slice. n is the size of the
 /// slice returned by the function (and number of the elements to shift).
 fn advance_slice<'a, T>(ptr: &mut &'a [T], n: usize) -> &'a [T] {
@@ -760,7 +795,7 @@ impl From<ConfigDeser> for Config {
 
 /// steps - number of steps to run.
 fn generate(
-    ms: &MetalState,
+    mms: &MatmulState,
     transformer: &Transformer,
     tokenizer: &Tokenizer,
     sampler: &mut Sampler,
@@ -780,7 +815,7 @@ fn generate(
     while pos < steps {
         // forward the transformer to get logits for the next token
         //let logits = forward(transformer, token, pos);
-        let logits = forward(ms, transformer, &mut run_state, token, pos);
+        let logits = forward(mms, transformer, &mut run_state, token, pos);
         assert_eq!(
             logits.len(),
             tokenizer.vocab_size,
@@ -824,7 +859,7 @@ fn generate(
 
 /// pos is i-th position of the token among all the tokens.
 fn forward<'a>(
-    ms: &MetalState,
+    mms: &MatmulState,
     transformer: &Transformer,
     s: &'a mut RunState,
     token: TokenId,
@@ -845,6 +880,8 @@ fn forward<'a>(
     let content_row = &w.token_embedding_table.slice_at_elem(token.as_raw(), dim);
     slicecpy(&mut x[..], &content_row, dim);
 
+    let ms = mms.metal_state();
+
     // forward all the layers
     for l in 0..p.n_layers {
         trace!("pos={pos} layer={l}");
@@ -860,16 +897,27 @@ fn forward<'a>(
         //s->v = s->value_cache + loff + pos * kv_dim;
         let s_v = s.value_cache.slice_at_mut(loff + pos * kv_dim, kv_dim);
 
-        // qkv matmuls for this position
-        matmul_offset(
-            ms,
+        ////// qkv matmuls for this position
+        ////matmul_offset(
+        ////    ms,
+        ////    &mut s.q,
+        ////    &s.xb,
+        ////    &w.wq,
+        ////    Offset::at_elem(l, dim * dim),
+        ////    dim,
+        ////    dim,
+        ////); // s.q = wq(l) @ xb
+
+        matmul_s(
+            mms,
             &mut s.q,
             &s.xb,
-            &w.wq,
+            BufferSelector::Wq,
             Offset::at_elem(l, dim * dim),
             dim,
             dim,
         ); // s.q = wq(l) @ xb
+
         // matmul(s->k, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
         matmul_offset(
             ms,
@@ -1047,17 +1095,17 @@ fn forward<'a>(
     &mut s.logits
 }
 
-pub fn matmul(
-    metal_state: &MetalState,
-    xout: &mut [f32],
-    x: &[f32],
-    w: &[f32],
-    dim_n: usize,
-    dim_d: usize,
-) {
-    // metal_matmul(metal_state, xout, x, w, dim_n, dim_d);
-    cpu_matmul(xout, x, w, dim_n, dim_d);
-}
+//pub fn matmul(
+//    metal_state: &MetalState,
+//    xout: &mut [f32],
+//    x: &[f32],
+//    w: &[f32],
+//    dim_n: usize,
+//    dim_d: usize,
+//) {
+//    // metal_matmul(metal_state, xout, x, w, dim_n, dim_d);
+//    cpu_matmul(xout, x, w, dim_n, dim_d);
+//}
 
 pub fn matmul_offset(
     metal_state: &MetalState,
@@ -1068,6 +1116,7 @@ pub fn matmul_offset(
     dim_n: usize,
     dim_d: usize,
 ) {
+    // TODO remove this one
     cpu_matmul(xout, x, w_full.slice_from_offset(w_offset), dim_n, dim_d);
 }
 
@@ -1169,10 +1218,10 @@ fn main() {
         args.rng_seed,
     );
 
-    let ms = MetalState::new();
+    let mms = MatmulState::new(&transformer.weights);
 
     generate(
-        &ms,
+        &mms,
         &transformer,
         &tokenizer,
         &mut sampler,

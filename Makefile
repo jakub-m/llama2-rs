@@ -60,3 +60,6 @@ clean-trace:
 	rm -rf ./target/instruments/ || true
 	rm -rf *.trace || true
 
+check: errors
+errors:
+	RUSTFLAGS=-Awarnings cargo check
