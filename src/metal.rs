@@ -4,7 +4,8 @@ use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_foundation::NSUInteger;
 use objc2_metal::{
-    MTLCommandBuffer, MTLCommandQueue, MTLCreateSystemDefaultDevice, MTLDevice, MTLResourceOptions,
+    MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLCreateSystemDefaultDevice, MTLDevice,
+    MTLResourceOptions,
 };
 use objc2_metal_performance_shaders::{
     MPSDataType, MPSMatrix, MPSMatrixDescriptor, MPSMatrixMultiplication,
@@ -54,21 +55,27 @@ pub fn matmul(
     panic!("bla")
 }
 
+/// Return direct reference to the particular buffer with weights.
 pub trait WithBufferRef<B> {
-    /// Return direct referenct to the particular buffer with weights.
     fn buffer_ref(&self, b_sel: B) -> &[f32];
 }
 
+/// Return already pre-initialized buffer suitable for GPU usage. The purpose is to initialise the
+/// buffers exactly once (in shared or in GPU-private memory).
+pub trait WithMetalBuf<B> {
+    fn metal_buffer(&self, b_sel: B) -> Option<&Retained<ProtocolObject<dyn MTLBuffer>>>;
+}
+
+/// Return state of Metal, which is initialised at the very beginning. This state can also
+/// contain per-buffer data.
 pub trait WithMetalState {
-    /// Return state of Metal, which is initialised at the very beginning. This state can also
-    /// contain per-buffer data.
     fn metal_state(&self) -> &MetalState;
 }
 
 /// State is the state that is needed for efficient operation. This includes: Metal state, shared weight
 /// buffer state. Buffer indicates which buffer (from the state) is used for multiplication.
 /// `w_sel` - selects the buffer from the state.
-pub fn matmul_s<S: WithBufferRef<B> + WithMetalState, B>(
+pub fn matmul_s<S: WithBufferRef<B> + WithMetalBuf<B> + WithMetalState, B: Copy>(
     state: &S,
     xout: &mut [f32],
     x: &[f32],
@@ -91,16 +98,25 @@ pub fn matmul_s<S: WithBufferRef<B> + WithMetalState, B>(
         w_len = w.len(),
     );
     let metal_state = state.metal_state();
-    let buf_w = unsafe {
-        metal_state
-            .device
-            .newBufferWithBytesNoCopy_length_options_deallocator(
-                w.as_c_void(),
-                dim_n * dim_d * size_of::<f32>(),
-                MTLResourceOptions::StorageModeShared,
-                None,
-            )
-            .unwrap()
+
+    let buf_w_holder;
+    let buf_w = if let Some(mb) = state.metal_buffer(w_sel) {
+        panic!("has buffer!");
+        mb
+    } else {
+        let o = unsafe {
+            metal_state
+                .device
+                .newBufferWithBytesNoCopy_length_options_deallocator(
+                    w.as_c_void(),
+                    dim_n * dim_d * size_of::<f32>(),
+                    MTLResourceOptions::StorageModeShared,
+                    None,
+                )
+                .unwrap()
+        };
+        buf_w_holder = Some(o);
+        buf_w_holder.as_ref().unwrap()
     };
 
     // Now describe the input buffers as matrices of appropriate dimensions.

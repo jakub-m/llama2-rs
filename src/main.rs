@@ -5,7 +5,7 @@ mod sliceutil;
 
 #[allow(unused_imports)]
 use llama2_rs::metal::{MetalState, matmul as metal_matmul};
-use llama2_rs::metal::{WithBufferRef, WithMetalState, matmul_s};
+use llama2_rs::metal::{WithBufferRef, WithMetalBuf, WithMetalState, matmul_s};
 #[allow(unused_imports)]
 use logging::*;
 #[allow(unused_imports)]
@@ -13,6 +13,8 @@ use matmul::matmul as cpu_matmul;
 
 use clap::Parser;
 use memmap2::{Mmap, MmapOptions};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+use objc2_metal::MTLBuffer;
 use rayon;
 use rayon::prelude::*;
 use std::{
@@ -556,7 +558,17 @@ impl<'a> WithMetalState for MatmulState<'a> {
     }
 }
 
+impl<'a> WithMetalBuf<BufferSelector> for MatmulState<'a> {
+    fn metal_buffer(
+        &self,
+        b_sel: BufferSelector,
+    ) -> Option<&Retained<ProtocolObject<dyn MTLBuffer>>> {
+        todo!()
+    }
+}
+
 /// Select particular buffer.
+#[derive(Clone, Copy, Debug)]
 enum BufferSelector {
     Wq,
 }
