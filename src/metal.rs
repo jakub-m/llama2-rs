@@ -150,27 +150,7 @@ pub fn matmul_s<S: WithBufferRef<B> + WithMetalBuf<B> + WithMetalState, B: Copy>
     assert_eq!(w_offset.end - w_offset.start, dim_n * dim_d);
     let metal_state = state.metal_state();
 
-    let buf_w_holder;
-    let buf_w = if let Some(mb) = state.metal_buffer(w_sel) {
-        // TODO add some check if dim_n * dim_d is the actual size of the whole w?
-        mb
-    } else {
-        panic!("dead branch");
-        //assert_eq!(dim_n * dim_d, w_ref_with_offset.len());
-        let o = unsafe {
-            metal_state
-                .device
-                .newBufferWithBytesNoCopy_length_options_deallocator(
-                    w_ref_full.as_c_void(),
-                    w_ref_full.len() * size_of::<f32>(),
-                    MTLResourceOptions::StorageModeShared,
-                    None,
-                )
-                .unwrap()
-        };
-        buf_w_holder = Some(o);
-        buf_w_holder.as_ref().unwrap()
-    };
+    let buf_w = state.metal_buffer(w_sel).unwrap();
 
     // Now describe the input buffers as matrices of appropriate dimensions.
     // W matrix is an array of values with rows packed one after another (no padding etc).
