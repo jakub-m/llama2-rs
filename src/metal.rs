@@ -103,6 +103,20 @@ pub fn matmul_s<S: WithBufferRef<B> + WithMetalState, B>(
             .unwrap()
     };
 
+    // Now describe the input buffers as matrices of appropriate dimensions.
+    // W matrix is an array of values with rows packed one after another (no padding etc).
+    let mat_w;
+    unsafe {
+        let mat = MPSMatrix::alloc();
+        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
+            dim_d as NSUInteger,
+            dim_n as NSUInteger,
+            dim_n * size_of::<f32>() as NSUInteger, // stride
+            MPSDataType::Float32,
+        );
+        mat_w = MPSMatrix::initWithBuffer_descriptor(mat, &buf_w, &desc);
+    };
+
     assert_eq!(
         x.len(),
         dim_n,
@@ -121,6 +135,20 @@ pub fn matmul_s<S: WithBufferRef<B> + WithMetalState, B>(
             .unwrap()
     };
 
+    // X matrics (vector) is just a flat array.
+    let mat_x;
+    unsafe {
+        let mat = MPSMatrix::alloc();
+        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
+            dim_n as NSUInteger,
+            dim_u as NSUInteger,
+            dim_u * size_of::<f32>() as NSUInteger,
+            MPSDataType::Float32,
+        );
+
+        mat_x = MPSMatrix::initWithBuffer_descriptor(mat, &buf_x, &desc);
+    }
+
     assert_eq!(
         xout.len(),
         dim_d,
@@ -138,34 +166,6 @@ pub fn matmul_s<S: WithBufferRef<B> + WithMetalState, B>(
             )
             .unwrap()
     };
-
-    // Now describe the input buffers as matrices of appropriate dimensions.
-    // W matrix is an array of values with rows packed one after another (no padding etc).
-    let mat_w;
-    unsafe {
-        let mat = MPSMatrix::alloc();
-        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-            dim_d as NSUInteger,
-            dim_n as NSUInteger,
-            dim_n * size_of::<f32>() as NSUInteger, // stride
-            MPSDataType::Float32,
-        );
-        mat_w = MPSMatrix::initWithBuffer_descriptor(mat, &buf_w, &desc);
-    };
-
-    // X matric (vector) is just a flat array.
-    let mat_x;
-    unsafe {
-        let mat = MPSMatrix::alloc();
-        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-            dim_n as NSUInteger,
-            dim_u as NSUInteger,
-            dim_u * size_of::<f32>() as NSUInteger,
-            MPSDataType::Float32,
-        );
-
-        mat_x = MPSMatrix::initWithBuffer_descriptor(mat, &buf_x, &desc);
-    }
 
     // The output matrix (vector) is just a flat array.
     let mat_xout;
