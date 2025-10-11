@@ -43,14 +43,20 @@ impl MetalState {
 
         let mtl_buffer_wq =
             unsafe { Self::new_private_mtl_buffer_from_slice(&device, &command_queue, wq) };
-
-        let mtl_buffer_wk = unsafe { Self::new_shared_mtl_buffer(&device, wk) };
-        let mtl_buffer_wv = unsafe { Self::new_shared_mtl_buffer(&device, wv) };
-        let mtl_buffer_wo = unsafe { Self::new_shared_mtl_buffer(&device, wo) };
-        let mtl_buffer_w1 = unsafe { Self::new_shared_mtl_buffer(&device, w1) };
-        let mtl_buffer_w2 = unsafe { Self::new_shared_mtl_buffer(&device, w2) };
-        let mtl_buffer_w3 = unsafe { Self::new_shared_mtl_buffer(&device, w3) };
-        let mtl_buffer_wcls = unsafe { Self::new_shared_mtl_buffer(&device, wcls) };
+        let mtl_buffer_wk =
+            unsafe { Self::new_private_mtl_buffer_from_slice(&device, &command_queue, wk) };
+        let mtl_buffer_wv =
+            unsafe { Self::new_private_mtl_buffer_from_slice(&device, &command_queue, wv) };
+        let mtl_buffer_wo =
+            unsafe { Self::new_private_mtl_buffer_from_slice(&device, &command_queue, wo) };
+        let mtl_buffer_w1 =
+            unsafe { Self::new_private_mtl_buffer_from_slice(&device, &command_queue, w1) };
+        let mtl_buffer_w2 =
+            unsafe { Self::new_private_mtl_buffer_from_slice(&device, &command_queue, w2) };
+        let mtl_buffer_w3 =
+            unsafe { Self::new_private_mtl_buffer_from_slice(&device, &command_queue, w3) };
+        let mtl_buffer_wcls =
+            unsafe { Self::new_private_mtl_buffer_from_slice(&device, &command_queue, wcls) };
         MetalState {
             device,
             command_queue,
