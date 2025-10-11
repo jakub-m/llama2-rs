@@ -23,6 +23,7 @@ pub struct MetalState {
     pub mtl_buffer_w1: Retained<ProtocolObject<dyn MTLBuffer>>,
     pub mtl_buffer_w2: Retained<ProtocolObject<dyn MTLBuffer>>,
     pub mtl_buffer_w3: Retained<ProtocolObject<dyn MTLBuffer>>,
+    pub mtl_buffer_wcls: Retained<ProtocolObject<dyn MTLBuffer>>,
 }
 
 impl MetalState {
@@ -34,6 +35,7 @@ impl MetalState {
         w1: &[f32],
         w2: &[f32],
         w3: &[f32],
+        wcls: &[f32],
     ) -> Self {
         let device: Retained<ProtocolObject<dyn MTLDevice>> =
             MTLCreateSystemDefaultDevice().unwrap();
@@ -46,6 +48,7 @@ impl MetalState {
         let mtl_buffer_w1 = unsafe { Self::new_mtl_buffer(&device, w1) };
         let mtl_buffer_w2 = unsafe { Self::new_mtl_buffer(&device, w2) };
         let mtl_buffer_w3 = unsafe { Self::new_mtl_buffer(&device, w3) };
+        let mtl_buffer_wcls = unsafe { Self::new_mtl_buffer(&device, wcls) };
         MetalState {
             device,
             command_queue,
@@ -56,6 +59,7 @@ impl MetalState {
             mtl_buffer_w1,
             mtl_buffer_w2,
             mtl_buffer_w3,
+            mtl_buffer_wcls,
         }
     }
 
@@ -143,6 +147,7 @@ pub fn matmul_s<S: WithBufferRef<B> + WithMetalBuf<B> + WithMetalState, B: Copy>
     //    "w.len() ({w_len}) != n * d ({dim_n} * {dim_d})",
     //    w_len = w_ref_with_offset.len(),
     //);
+    assert_eq!(w_offset.end - w_offset.start, dim_n * dim_d);
     let metal_state = state.metal_state();
 
     let buf_w_holder;
@@ -150,6 +155,7 @@ pub fn matmul_s<S: WithBufferRef<B> + WithMetalBuf<B> + WithMetalState, B: Copy>
         // TODO add some check if dim_n * dim_d is the actual size of the whole w?
         mb
     } else {
+        panic!("dead branch");
         //assert_eq!(dim_n * dim_d, w_ref_with_offset.len());
         let o = unsafe {
             metal_state
@@ -168,8 +174,7 @@ pub fn matmul_s<S: WithBufferRef<B> + WithMetalBuf<B> + WithMetalState, B: Copy>
 
     // Now describe the input buffers as matrices of appropriate dimensions.
     // W matrix is an array of values with rows packed one after another (no padding etc).
-    let mat_w;
-    unsafe {
+    let mat_w = unsafe {
         let mat = MPSMatrix::alloc();
         let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
             dim_d as NSUInteger,
@@ -178,12 +183,12 @@ pub fn matmul_s<S: WithBufferRef<B> + WithMetalBuf<B> + WithMetalState, B: Copy>
             MPSDataType::Float32,
         );
         //mat_w = MPSMatrix::initWithBuffer_descriptor(mat, &buf_w, &desc);
-        mat_w = MPSMatrix::initWithBuffer_offset_descriptor(
+        MPSMatrix::initWithBuffer_offset_descriptor(
             mat,
             &buf_w,
             w_offset.start * size_of::<f32>(),
             &desc,
-        );
+        )
     };
 
     assert_eq!(
@@ -258,9 +263,9 @@ pub fn matmul_s<S: WithBufferRef<B> + WithMetalBuf<B> + WithMetalState, B: Copy>
                 &metal_state.device,
                 false,
                 false,
-                dim_d,
-                dim_u,
-                dim_d,
+                dim_d, // result_col
+                dim_u, // result_row
+                dim_n, // interior_col
                 1.0,
                 0.0,
             )

@@ -545,7 +545,14 @@ struct MatmulState<'a> {
 impl<'a> MatmulState<'a> {
     fn new(weights: &'a TransformerWeights<'a>) -> MatmulState<'a> {
         let metal_state = MetalState::new(
-            weights.wq, weights.wk, weights.wv, weights.wo, weights.w1, weights.w2, weights.w3,
+            weights.wq,
+            weights.wk,
+            weights.wv,
+            weights.wo,
+            weights.w1,
+            weights.w2,
+            weights.w3,
+            weights.wcls,
         );
         MatmulState {
             metal_state,
@@ -574,6 +581,7 @@ impl<'a> WithMetalBuf<BufferSelector> for MatmulState<'a> {
             BufferSelector::W1 => Some(&ms.mtl_buffer_w1),
             BufferSelector::W2 => Some(&ms.mtl_buffer_w2),
             BufferSelector::W3 => Some(&ms.mtl_buffer_w3),
+            BufferSelector::Wcls => Some(&ms.mtl_buffer_wcls),
         }
     }
 }
@@ -588,6 +596,7 @@ enum BufferSelector {
     W1,
     W2,
     W3,
+    Wcls,
 }
 
 impl<'a> WithBufferRef<BufferSelector> for MatmulState<'a> {
@@ -600,6 +609,7 @@ impl<'a> WithBufferRef<BufferSelector> for MatmulState<'a> {
             BufferSelector::W1 => self.weights.w1,
             BufferSelector::W2 => self.weights.w2,
             BufferSelector::W3 => self.weights.w3,
+            BufferSelector::Wcls => self.weights.wcls,
         }
     }
 }
@@ -1058,20 +1068,20 @@ fn forward<'a>(
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
-        matmul_offset(
-            ms,
+        matmul_s(
+            mms,
             &mut s.hb,
             &s.xb,
-            &w.w1,
+            BufferSelector::W1,
             Offset::at_elem(l, dim * hidden_dim), //[l * dim * hidden_dim..],
             dim,
             hidden_dim,
         );
-        matmul_offset(
-            ms,
+        matmul_s(
+            mms,
             &mut s.hb2,
             &s.xb,
-            &w.w3,
+            BufferSelector::W3,
             Offset::at_elem(l, dim * hidden_dim),
             dim,
             hidden_dim,
@@ -1087,11 +1097,11 @@ fn forward<'a>(
             s.hb[i] = val;
         }
         // final matmul to get the output of the ffn
-        matmul_offset(
-            ms,
+        matmul_s(
+            mms,
             &mut s.xb,
             &s.hb,
-            &w.w2,
+            BufferSelector::W2,
             Offset::at_elem(l, dim * hidden_dim),
             hidden_dim,
             dim,
@@ -1108,11 +1118,11 @@ fn forward<'a>(
 
     // classifier into logits
     //// matmul(s->logits, x, w->wcls, p->dim, p->vocab_size);
-    matmul_offset(
-        ms,
+    matmul_s(
+        mms,
         &mut s.logits,
         &x,
-        &w.wcls,
+        BufferSelector::Wcls,
         Offset::at_elem(0, w.wcls.len()),
         p.dim,
         p.vocab_size,
