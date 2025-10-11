@@ -3,9 +3,9 @@ mod matmul;
 mod metal;
 mod sliceutil;
 
+use llama2_rs::metal::{BufferType, WithBufferRef, WithMetalBuf, WithMetalState, matmul_s};
 #[allow(unused_imports)]
 use llama2_rs::metal::{MetalState, matmul as metal_matmul};
-use llama2_rs::metal::{WithBufferRef, WithMetalBuf, WithMetalState, matmul_s};
 #[allow(unused_imports)]
 use logging::*;
 #[allow(unused_imports)]
@@ -553,6 +553,7 @@ impl<'a> MatmulState<'a> {
             weights.w2,
             weights.w3,
             weights.wcls,
+            BufferType::Shared,
         );
         MatmulState {
             metal_state,
@@ -847,6 +848,7 @@ fn generate(
     prompt: String,
     steps: usize,
 ) {
+    eprintln!("start generate");
     let prompt_tokens = tokenizer.encode(&prompt, AddBos::Yes, AddEos::No);
     let mut prompt_tokens = prompt_tokens.iter();
     // start the main loop
