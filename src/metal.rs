@@ -1,4 +1,4 @@
-use crate::sliceutil::{Offset, SliceFromOffset};
+use crate::sliceutil::Offset;
 use objc2::AnyThread;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
@@ -21,37 +21,35 @@ pub struct MetalState {
 }
 
 impl MetalState {
-    pub fn new(wq: &[f32], wk: &[f32]) -> MetalState {
-        let device: objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn MTLDevice>> =
+    pub fn new(wq: &[f32], wk: &[f32]) -> Self {
+        let device: Retained<ProtocolObject<dyn MTLDevice>> =
             MTLCreateSystemDefaultDevice().unwrap();
         let command_queue = device.newCommandQueue().unwrap();
 
-        let mtl_buffer_wq = unsafe {
-            device
-                .newBufferWithBytesNoCopy_length_options_deallocator(
-                    wq.as_c_void(),
-                    wq.len() * size_of::<f32>(),
-                    MTLResourceOptions::StorageModeShared, // TODO here initialize private
-                    None,
-                )
-                .unwrap()
-        };
-        let mtl_buffer_wk = unsafe {
-            device
-                .newBufferWithBytesNoCopy_length_options_deallocator(
-                    wk.as_c_void(),
-                    wk.len() * size_of::<f32>(),
-                    MTLResourceOptions::StorageModeShared, // TODO here initialize private
-                    None,
-                )
-                .unwrap()
-        };
+        let mtl_buffer_wq = unsafe { Self::new_mtl_buffer(&device, wq) };
+        let mtl_buffer_wk = unsafe { Self::new_mtl_buffer(&device, wk) };
 
         MetalState {
             device,
             command_queue,
             mtl_buffer_wq,
             mtl_buffer_wk,
+        }
+    }
+
+    unsafe fn new_mtl_buffer(
+        device: &Retained<ProtocolObject<dyn MTLDevice>>,
+        buf: &[f32],
+    ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
+        unsafe {
+            device
+                .newBufferWithBytesNoCopy_length_options_deallocator(
+                    buf.as_c_void(),
+                    buf.len() * size_of::<f32>(),
+                    MTLResourceOptions::StorageModeShared, // TODO here initialize private
+                    None,
+                )
+                .unwrap()
         }
     }
 }
