@@ -544,7 +544,7 @@ struct MatmulState<'a> {
 
 impl<'a> MatmulState<'a> {
     fn new(weights: &'a TransformerWeights<'a>) -> MatmulState<'a> {
-        let metal_state = MetalState::new(weights.wq);
+        let metal_state = MetalState::new(weights.wq, weights.wk);
         MatmulState {
             metal_state,
             weights,
@@ -566,6 +566,7 @@ impl<'a> WithMetalBuf<BufferSelector> for MatmulState<'a> {
         let ms = self.metal_state();
         match b_sel {
             BufferSelector::Wq => Some(&ms.mtl_buffer_wq),
+            BufferSelector::Wk => Some(&ms.mtl_buffer_wk),
         }
     }
 }
@@ -574,12 +575,14 @@ impl<'a> WithMetalBuf<BufferSelector> for MatmulState<'a> {
 #[derive(Clone, Copy, Debug)]
 enum BufferSelector {
     Wq,
+    Wk,
 }
 
 impl<'a> WithBufferRef<BufferSelector> for MatmulState<'a> {
     fn buffer_ref(&self, b_sel: BufferSelector) -> &[f32] {
         match b_sel {
             BufferSelector::Wq => self.weights.wq,
+            BufferSelector::Wk => self.weights.wk,
         }
     }
 }
@@ -912,17 +915,7 @@ fn forward<'a>(
         //s->v = s->value_cache + loff + pos * kv_dim;
         let s_v = s.value_cache.slice_at_mut(loff + pos * kv_dim, kv_dim);
 
-        ////// qkv matmuls for this position
-        ////matmul_offset(
-        ////    ms,
-        ////    &mut s.q,
-        ////    &s.xb,
-        ////    &w.wq,
-        ////    Offset::at_elem(l, dim * dim),
-        ////    dim,
-        ////    dim,
-        ////); // s.q = wq(l) @ xb
-
+        // qkv matmuls for this position
         matmul_s(
             mms,
             &mut s.q,
@@ -934,11 +927,11 @@ fn forward<'a>(
         ); // s.q = wq(l) @ xb
 
         // matmul(s->k, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
-        matmul_offset(
-            ms,
+        matmul_s(
+            mms,
             s_k,
             &s.xb,
-            &w.wk,
+            BufferSelector::Wk,
             Offset::at_elem(l, dim * kv_dim),
             dim,
             kv_dim,

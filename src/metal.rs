@@ -17,10 +17,11 @@ pub struct MetalState {
     command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     // whole mtl buffer
     pub mtl_buffer_wq: Retained<ProtocolObject<dyn MTLBuffer>>,
+    pub mtl_buffer_wk: Retained<ProtocolObject<dyn MTLBuffer>>,
 }
 
 impl MetalState {
-    pub fn new(wq: &[f32]) -> MetalState {
+    pub fn new(wq: &[f32], wk: &[f32]) -> MetalState {
         let device: objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn MTLDevice>> =
             MTLCreateSystemDefaultDevice().unwrap();
         let command_queue = device.newCommandQueue().unwrap();
@@ -35,11 +36,22 @@ impl MetalState {
                 )
                 .unwrap()
         };
+        let mtl_buffer_wk = unsafe {
+            device
+                .newBufferWithBytesNoCopy_length_options_deallocator(
+                    wk.as_c_void(),
+                    wk.len() * size_of::<f32>(),
+                    MTLResourceOptions::StorageModeShared, // TODO here initialize private
+                    None,
+                )
+                .unwrap()
+        };
 
         MetalState {
             device,
             command_queue,
             mtl_buffer_wq,
+            mtl_buffer_wk,
         }
     }
 }
