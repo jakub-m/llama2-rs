@@ -4,8 +4,8 @@ use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_foundation::NSUInteger;
 use objc2_metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLCreateSystemDefaultDevice, MTLDevice,
-    MTLResourceOptions,
+    MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
+    MTLCreateSystemDefaultDevice, MTLDevice, MTLResourceOptions,
 };
 use objc2_metal_performance_shaders::{
     MPSDataType, MPSMatrix, MPSMatrixDescriptor, MPSMatrixMultiplication,
@@ -41,14 +41,16 @@ impl MetalState {
             MTLCreateSystemDefaultDevice().unwrap();
         let command_queue = device.newCommandQueue().unwrap();
 
-        let mtl_buffer_wq = unsafe { Self::new_mtl_buffer(&device, wq) };
-        let mtl_buffer_wk = unsafe { Self::new_mtl_buffer(&device, wk) };
-        let mtl_buffer_wv = unsafe { Self::new_mtl_buffer(&device, wv) };
-        let mtl_buffer_wo = unsafe { Self::new_mtl_buffer(&device, wo) };
-        let mtl_buffer_w1 = unsafe { Self::new_mtl_buffer(&device, w1) };
-        let mtl_buffer_w2 = unsafe { Self::new_mtl_buffer(&device, w2) };
-        let mtl_buffer_w3 = unsafe { Self::new_mtl_buffer(&device, w3) };
-        let mtl_buffer_wcls = unsafe { Self::new_mtl_buffer(&device, wcls) };
+        let mtl_buffer_wq =
+            unsafe { Self::new_private_mtl_buffer_from_slice(&device, &command_queue, wq) };
+
+        let mtl_buffer_wk = unsafe { Self::new_shared_mtl_buffer(&device, wk) };
+        let mtl_buffer_wv = unsafe { Self::new_shared_mtl_buffer(&device, wv) };
+        let mtl_buffer_wo = unsafe { Self::new_shared_mtl_buffer(&device, wo) };
+        let mtl_buffer_w1 = unsafe { Self::new_shared_mtl_buffer(&device, w1) };
+        let mtl_buffer_w2 = unsafe { Self::new_shared_mtl_buffer(&device, w2) };
+        let mtl_buffer_w3 = unsafe { Self::new_shared_mtl_buffer(&device, w3) };
+        let mtl_buffer_wcls = unsafe { Self::new_shared_mtl_buffer(&device, wcls) };
         MetalState {
             device,
             command_queue,
@@ -63,7 +65,35 @@ impl MetalState {
         }
     }
 
-    unsafe fn new_mtl_buffer(
+    unsafe fn new_private_mtl_buffer_from_slice(
+        device: &Retained<ProtocolObject<dyn MTLDevice>>,
+        command_queue: &Retained<ProtocolObject<dyn MTLCommandQueue>>,
+        buf: &[f32],
+    ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
+        let shared_buf = unsafe { Self::new_shared_mtl_buffer(&device, buf) };
+        let buf_size = buf.len() * size_of::<f32>();
+        let private_buf = device
+            .newBufferWithLength_options(buf_size, MTLResourceOptions::StorageModePrivate)
+            .unwrap();
+
+        let command_buffer = command_queue.commandBuffer().unwrap();
+        let blit_command_encoder = command_buffer.blitCommandEncoder().unwrap();
+        unsafe {
+            blit_command_encoder.copyFromBuffer_sourceOffset_toBuffer_destinationOffset_size(
+                &shared_buf,
+                0,
+                &private_buf,
+                0,
+                buf_size,
+            );
+        };
+        blit_command_encoder.endEncoding();
+        command_buffer.commit();
+        command_buffer.waitUntilCompleted();
+        private_buf
+    }
+
+    unsafe fn new_shared_mtl_buffer(
         device: &Retained<ProtocolObject<dyn MTLDevice>>,
         buf: &[f32],
     ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
