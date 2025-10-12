@@ -31,7 +31,7 @@ use objc2_metal_performance_shaders::{
 use std::{ffi::c_void, ptr::NonNull, time::SystemTime};
 
 fn main() {
-    let n_repeats = 30;
+    let n_repeats = 10000;
 
     for (i, d) in MTLCopyAllDevices().iter().enumerate() {
         eprintln!("(Device {j}: {d:?})", j = i + 1);
@@ -41,11 +41,18 @@ fn main() {
     // m 1 2 3      k 1 2       m 22 28
     // m 4 5 6  x   k 3 4  =    m 49 64
     // m 7 8 9      k 5 6       m 76 100
+    //
+    //
+    //
+    //
 
     //let dim_m: usize = 1_000_000;
     //let dim_k: usize = 1_000;
-    let dim_m: usize = 31623;
-    let dim_k: usize = 31623;
+    let dim = 4096;
+    let hidden_dim = 11008;
+
+    let dim_m: usize = hidden_dim;
+    let dim_k: usize = dim;
     let dim_n: usize = 1;
 
     let input_w: Vec<f32> = init_vec(dim_m * dim_k);
@@ -218,21 +225,21 @@ fn run_matmul_metal(
     }
 }
 
-fn run_matmul_cpu(
-    n_repeats: usize,
-    output: &mut [f32],
-    input_w: &[f32],
-    input_x: &[f32],
-    dim_m: usize,
-    dim_k: usize,
-    dim_n: usize,
-) {
-    assert_eq!(dim_n, 1);
-    for i in 0..n_repeats {
-        eprint!("\rcpu {i}  ");
-        llama2_rs::matmul::matmul(output, input_x, input_w, dim_k, dim_m);
-    }
-}
+///fn run_matmul_cpu(
+///    n_repeats: usize,
+///    output: &mut [f32],
+///    input_w: &[f32],
+///    input_x: &[f32],
+///    dim_m: usize,
+///    dim_k: usize,
+///    dim_n: usize,
+///) {
+///    assert_eq!(dim_n, 1);
+///    for i in 0..n_repeats {
+///        eprint!("\rcpu {i}  ");
+///        llama2_rs::matmul::matmul(output, input_x, input_w, dim_k, dim_m);
+///    }
+///}
 
 trait AsNonNull {
     fn as_c_void(&self) -> NonNull<c_void>;
