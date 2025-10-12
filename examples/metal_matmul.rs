@@ -30,9 +30,10 @@ use objc2_metal_performance_shaders::{
 };
 use std::{ffi::c_void, ptr::NonNull, time::SystemTime};
 
-fn main() {
-    let n_repeats = 10000;
+const N_LAYERS: usize = 32;
+const N_REPEATS: usize = 1000;
 
+fn main() {
     for (i, d) in MTLCopyAllDevices().iter().enumerate() {
         eprintln!("(Device {j}: {d:?})", j = i + 1);
     }
@@ -55,7 +56,7 @@ fn main() {
     let dim_k: usize = dim;
     let dim_n: usize = 1;
 
-    let input_w: Vec<f32> = init_vec(dim_m * dim_k);
+    let input_w: Vec<f32> = init_vec(dim_m * dim_k * N_LAYERS);
     let input_x: Vec<f32> = init_vec(dim_k * dim_n);
     // initial output values matter if beta MPSMatrixMultiplication is != 0 (it's GEMM)
     let mut output: Vec<f32> = vec![0.; dim_m * dim_n];
@@ -63,15 +64,7 @@ fn main() {
     let start = SystemTime::now();
     eprintln!("{t} start matmul ", t = elapsed(start));
 
-    run_matmul_metal(
-        n_repeats,
-        &mut output,
-        &input_w,
-        &input_x,
-        dim_m,
-        dim_k,
-        dim_n,
-    );
+    run_matmul_metal(&mut output, &input_w, &input_x, dim_m, dim_k, dim_n);
 
     //run_matmul_cpu(
     //    n_repeats,
@@ -89,13 +82,12 @@ fn main() {
     eprintln!("{} finished", elapsed(start));
     let dt = elapsed(start);
     eprintln!(
-        "{p} ms per multiplication for dims n={dim_n} k={dim_k} m={dim_m} and {n_repeats} repeats",
-        p = 1000. * dt / n_repeats as f32
+        "{p} ms per multiplication for dims n={dim_n} k={dim_k} m={dim_m} and {N_REPEATS} repeats",
+        p = 1000. * dt / N_REPEATS as f32
     );
 }
 
 fn run_matmul_metal(
-    n_repeats: usize,
     output: &mut [f32],
     input_w: &[f32],
     input_x: &[f32],
@@ -107,6 +99,15 @@ fn run_matmul_metal(
     eprintln!("{device:?}");
     let command_queue = device.newCommandQueue().unwrap();
 
+    // TODO use N layers and indexed access.
+    // TODO check if changing layers (offset) in each loop changes the overhead.
+    // TODO use W private memory and copy.
+
+    // Allocating buffers and matrices (even if no-copy in shared mem) between each run, makes the
+    // computation run at 126ms per matmul, vs. 5ms per matmul when all the buffers and matrices
+    // are allocated only once.
+
+    let input_w_len_layer_bytes = dim_m * dim_k * size_of::<f32>();
     let buf_input_w = unsafe {
         device
             .newBufferWithBytesNoCopy_length_options_deallocator(
@@ -118,74 +119,86 @@ fn run_matmul_metal(
             .expect("expected configured shared W")
     };
 
-    let buf_input_x = unsafe {
-        device
-            .newBufferWithBytesNoCopy_length_options_deallocator(
-                input_x.as_c_void(),
-                input_x.len() * size_of::<f32>(),
-                MTLResourceOptions::StorageModeShared,
-                None,
+    for i in 0..N_REPEATS {
+        // Initializing matrices (but not buffers) inside the loop seems to be of a small overhead.
+        //
+        // Initialising the small shared buffers inside the loop and the large W matrix outside
+        // loop seems still be very fast. It's large W allocation that seems very slow.
+
+        let buf_input_x = unsafe {
+            device
+                .newBufferWithBytesNoCopy_length_options_deallocator(
+                    input_x.as_c_void(),
+                    input_x.len() * size_of::<f32>(),
+                    MTLResourceOptions::StorageModeShared,
+                    None,
+                )
+                .unwrap()
+        };
+
+        let buf_out = unsafe {
+            device
+                .newBufferWithBytesNoCopy_length_options_deallocator(
+                    output.as_c_void(),
+                    output.len() * size_of::<f32>(),
+                    MTLResourceOptions::StorageModeShared,
+                    None,
+                )
+                .unwrap()
+        };
+
+        let mat_w = unsafe {
+            let mat = MPSMatrix::alloc();
+            let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
+                dim_m as NSUInteger,
+                dim_k as NSUInteger,
+                dim_k * size_of::<f32>() as NSUInteger,
+                MPSDataType::Float32,
+            );
+
+            // Changing offsets in each iteration (offset to layer) does not affect performance, or
+            // affects it insignivicantly (unsurprisingly).
+            MPSMatrix::initWithBuffer_offset_descriptor(
+                mat,
+                &buf_input_w,
+                input_w_len_layer_bytes * (i % N_LAYERS),
+                &desc,
             )
-            .unwrap()
-    };
+        };
+        //dbg!(&mat_w);
 
-    let buf_out = unsafe {
-        device
-            .newBufferWithBytesNoCopy_length_options_deallocator(
-                output.as_c_void(),
-                output.len() * size_of::<f32>(),
-                MTLResourceOptions::StorageModeShared,
-                None,
-            )
-            .unwrap()
-    };
+        let mat_x;
+        unsafe {
+            let mat = MPSMatrix::alloc();
+            let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
+                dim_k as NSUInteger,
+                dim_n as NSUInteger,
+                dim_n * size_of::<f32>() as NSUInteger,
+                MPSDataType::Float32,
+            );
 
-    let mat_w;
-    unsafe {
-        let mat = MPSMatrix::alloc();
-        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-            dim_m as NSUInteger,
-            dim_k as NSUInteger,
-            dim_k * size_of::<f32>() as NSUInteger,
-            MPSDataType::Float32,
-        );
+            mat_x = MPSMatrix::initWithBuffer_descriptor(mat, &buf_input_x, &desc);
+        }
+        //dbg!(&mat_x);
 
-        mat_w = MPSMatrix::initWithBuffer_descriptor(mat, &buf_input_w, &desc);
-    }
-    //dbg!(&mat_w);
+        let mat_out;
+        unsafe {
+            let mat = MPSMatrix::alloc();
+            let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
+                dim_m as NSUInteger,
+                dim_n as NSUInteger,
+                dim_n * size_of::<f32>() as NSUInteger,
+                MPSDataType::Float32,
+            );
 
-    let mat_x;
-    unsafe {
-        let mat = MPSMatrix::alloc();
-        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-            dim_k as NSUInteger,
-            dim_n as NSUInteger,
-            dim_n * size_of::<f32>() as NSUInteger,
-            MPSDataType::Float32,
-        );
+            mat_out = MPSMatrix::initWithBuffer_descriptor(mat, &buf_out, &desc);
+        }
+        //dbg!(&mat_out);
 
-        mat_x = MPSMatrix::initWithBuffer_descriptor(mat, &buf_input_x, &desc);
-    }
-    //dbg!(&mat_x);
-
-    let mat_out;
-    unsafe {
-        let mat = MPSMatrix::alloc();
-        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-            dim_m as NSUInteger,
-            dim_n as NSUInteger,
-            dim_n * size_of::<f32>() as NSUInteger,
-            MPSDataType::Float32,
-        );
-
-        mat_out = MPSMatrix::initWithBuffer_descriptor(mat, &buf_out, &desc);
-    }
-    //dbg!(&mat_out);
-
-    let matmul;
-    unsafe {
-        let matmul_alloc = MPSMatrixMultiplication::alloc();
-        matmul = MPSMatrixMultiplication::initWithDevice_transposeLeft_transposeRight_resultRows_resultColumns_interiorColumns_alpha_beta(
+        let matmul;
+        unsafe {
+            let matmul_alloc = MPSMatrixMultiplication::alloc();
+            matmul = MPSMatrixMultiplication::initWithDevice_transposeLeft_transposeRight_resultRows_resultColumns_interiorColumns_alpha_beta(
             matmul_alloc,
             &device,
             false, // transpose
@@ -196,10 +209,9 @@ fn run_matmul_metal(
             1.0, // alpha, beta
             0.0,
         );
-    };
-    //dbg!(&matmul);
+        };
+        //dbg!(&matmul);
 
-    for i in 0..n_repeats {
         eprint!("\rmetal {i}  ");
 
         let command_buffer = command_queue.commandBuffer().unwrap();
@@ -215,11 +227,6 @@ fn run_matmul_metal(
                 &mat_out,
             );
         }
-        //dbg!(command_buffer.status());
-
-        //dbg!(input_w);
-        //dbg!(input_x);
-        //dbg!(output);
         command_buffer.commit();
         command_buffer.waitUntilCompleted();
     }
