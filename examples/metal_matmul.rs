@@ -19,11 +19,11 @@
 //! - 88.0205 ms CPU (rayon)
 
 use llama2_rs::matmul::matmul;
-use objc2::AnyThread;
+use objc2::{AnyThread, rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::NSUInteger;
 use objc2_metal::{
-    MTLCommandBuffer, MTLCommandQueue, MTLCopyAllDevices, MTLCreateSystemDefaultDevice, MTLDevice,
-    MTLResourceOptions,
+    MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
+    MTLCopyAllDevices, MTLCreateSystemDefaultDevice, MTLDevice, MTLResourceOptions,
 };
 use objc2_metal_performance_shaders::{
     MPSDataType, MPSMatrix, MPSMatrixDescriptor, MPSMatrixMultiplication,
@@ -96,28 +96,30 @@ fn run_matmul_metal(
     dim_n: usize,
 ) {
     let device = MTLCreateSystemDefaultDevice().unwrap();
-    eprintln!("{device:?}");
+    dbg!(&device, dim_m, dim_k, dim_n);
     let command_queue = device.newCommandQueue().unwrap();
-
-    // TODO use N layers and indexed access.
-    // TODO check if changing layers (offset) in each loop changes the overhead.
-    // TODO use W private memory and copy.
 
     // Allocating buffers and matrices (even if no-copy in shared mem) between each run, makes the
     // computation run at 126ms per matmul, vs. 5ms per matmul when all the buffers and matrices
     // are allocated only once.
 
     let input_w_len_layer_bytes = dim_m * dim_k * size_of::<f32>();
-    let buf_input_w = unsafe {
-        device
-            .newBufferWithBytesNoCopy_length_options_deallocator(
-                input_w.as_c_void(),
-                input_w.len() * size_of::<f32>(),
-                MTLResourceOptions::StorageModeShared,
-                None,
-            )
-            .expect("expected configured shared W")
-    };
+
+    //let buf_input_w = unsafe {
+    //    device
+    //        .newBufferWithBytesNoCopy_length_options_deallocator(
+    //            input_w.as_c_void(),
+    //            input_w.len() * size_of::<f32>(),
+    //            MTLResourceOptions::StorageModeShared,
+    //            None,
+    //        )
+    //        .expect("expected configured shared W")
+    //};
+
+    let buf_input_w =
+        unsafe { new_private_mtl_buffer_from_slice(&device, &command_queue, &input_w) };
+    //let buf_input_w = unsafe { new_shared_mtl_buffer(&device, &input_w) };
+    dbg!(&buf_input_w);
 
     for i in 0..N_REPEATS {
         // Initializing matrices (but not buffers) inside the loop seems to be of a small overhead.
@@ -247,6 +249,50 @@ fn run_matmul_metal(
 ///        llama2_rs::matmul::matmul(output, input_x, input_w, dim_k, dim_m);
 ///    }
 ///}
+
+unsafe fn new_private_mtl_buffer_from_slice(
+    device: &Retained<ProtocolObject<dyn MTLDevice>>,
+    command_queue: &Retained<ProtocolObject<dyn MTLCommandQueue>>,
+    buf: &[f32],
+) -> Retained<ProtocolObject<dyn MTLBuffer>> {
+    let shared_buf = unsafe { new_shared_mtl_buffer(&device, buf) };
+    let buf_size = buf.len() * size_of::<f32>();
+    let private_buf = device
+        .newBufferWithLength_options(buf_size, MTLResourceOptions::StorageModePrivate)
+        .unwrap();
+
+    let command_buffer = command_queue.commandBuffer().unwrap();
+    let blit_command_encoder = command_buffer.blitCommandEncoder().unwrap();
+    unsafe {
+        blit_command_encoder.copyFromBuffer_sourceOffset_toBuffer_destinationOffset_size(
+            &shared_buf,
+            0,
+            &private_buf,
+            0,
+            buf_size,
+        );
+    };
+    blit_command_encoder.endEncoding();
+    command_buffer.commit();
+    command_buffer.waitUntilCompleted();
+    private_buf
+}
+
+unsafe fn new_shared_mtl_buffer(
+    device: &Retained<ProtocolObject<dyn MTLDevice>>,
+    buf: &[f32],
+) -> Retained<ProtocolObject<dyn MTLBuffer>> {
+    unsafe {
+        device
+            .newBufferWithBytesNoCopy_length_options_deallocator(
+                buf.as_c_void(),
+                buf.len() * size_of::<f32>(),
+                MTLResourceOptions::StorageModeShared, // TODO here initialize private
+                None,
+            )
+            .unwrap()
+    }
+}
 
 trait AsNonNull {
     fn as_c_void(&self) -> NonNull<c_void>;
