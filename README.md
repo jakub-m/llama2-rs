@@ -9,7 +9,6 @@ To run tests you need `tokenizer.bin` from the [original repo][1].
 
 # Learnings
 
-
 Rust:
 
 - Using Rust-ish type (like `TokenId` instead of `usize`) helps understanding the code.
@@ -23,7 +22,6 @@ Rust:
   tricky. Adding extra asserts here and there to see if we didn't pass a slice
   that has unexpected size (where we know the size), saves a lot of trouble.
 
-
 Rayon:
 
 - Use `RAYON_NUM_THREADS=1` for sequential execution (good for debugging).
@@ -35,12 +33,17 @@ Metal:
 - Just slapping GPU at the problem (this problem at least) will not make it
   magically faster.
 
+- I didn't see much difference in performance when using shared or private GPU
+memory buffers. Maybe it's because of specific access patterns of the program.
+
 Other tools:
 
 - ChatGPT was _very useful_ in learning `lldb` commands.
 
 - [mermaid](https://mermaid.live) is an absolutely fantastic tool for diagrams.
 
+- Monitor if you memory does not start to swap , with `sysctl vm.swapusage` or
+Activity Monitor. Your computation will instantly become dog slow.
 
 [par_iter]: https://docs.rs/rayon/latest/rayon/iter/index.html
 

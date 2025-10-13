@@ -20,10 +20,10 @@
 
 use llama2_rs::matmul::matmul;
 use objc2::{AnyThread, rc::Retained, runtime::ProtocolObject};
-use objc2_foundation::NSUInteger;
+use objc2_foundation::{NSUInteger, ns_string};
 use objc2_metal::{
     MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLCopyAllDevices, MTLCreateSystemDefaultDevice, MTLDevice, MTLResourceOptions,
+    MTLCopyAllDevices, MTLCreateSystemDefaultDevice, MTLDevice, MTLLibrary, MTLResourceOptions,
 };
 use objc2_metal_performance_shaders::{
     MPSDataType, MPSMatrix, MPSMatrixDescriptor, MPSMatrixMultiplication,
@@ -32,6 +32,8 @@ use std::{ffi::c_void, ptr::NonNull, time::SystemTime};
 
 const N_LAYERS: usize = 32;
 const N_REPEATS: usize = 1000;
+
+const CONVERT_F16_SOURCE: &str = include_str!("./convert_f16.metal");
 
 fn main() {
     for (i, d) in MTLCopyAllDevices().iter().enumerate() {
@@ -96,6 +98,30 @@ fn run_matmul_metal(
     dim_u: usize,
 ) {
     let device = MTLCreateSystemDefaultDevice().unwrap();
+
+    // Library with the functions
+    let convert_f16_source = ns_string!(CONVERT_F16_SOURCE);
+    let library = device
+        .newLibraryWithSource_options_error(convert_f16_source, None /*compilation options*/)
+        .unwrap();
+
+    let convert_f32_to_f16_func = library
+        .newFunctionWithName(ns_string!("convert_f32_to_f16"))
+        .unwrap();
+
+    let convert_f16_to_f32_func = library
+        .newFunctionWithName(ns_string!("convert_f16_to_f32"))
+        .unwrap();
+
+    let convert_f32_to_f16_pso = device
+        .newComputePipelineStateWithFunction_error(&convert_f32_to_f16_func)
+        .unwrap();
+
+    let convert_f16_to_f32_pso = device
+        .newComputePipelineStateWithFunction_error(&convert_f16_to_f32_func)
+        .unwrap();
+    // End library with the functions
+
     dbg!(&device, dim_d, dim_n, dim_u);
     let command_queue = device.newCommandQueue().unwrap();
 
@@ -104,17 +130,6 @@ fn run_matmul_metal(
     // are allocated only once.
 
     let input_w_len_layer_bytes = dim_d * dim_n * size_of::<f32>();
-
-    //let buf_input_w = unsafe {
-    //    device
-    //        .newBufferWithBytesNoCopy_length_options_deallocator(
-    //            input_w.as_c_void(),
-    //            input_w.len() * size_of::<f32>(),
-    //            MTLResourceOptions::StorageModeShared,
-    //            None,
-    //        )
-    //        .expect("expected configured shared W")
-    //};
 
     let buf_input_w =
         unsafe { new_private_mtl_buffer_from_slice(&device, &command_queue, &input_w) };
@@ -125,35 +140,13 @@ fn run_matmul_metal(
         unsafe { new_private_mtl_buffer_from_slice(&device, &command_queue, &input_x) };
     let buf_out = unsafe { new_private_mtl_buffer_from_slice(&device, &command_queue, &output) };
 
-    //let buf_input_x = unsafe {
-    //    device
-    //        .newBufferWithBytesNoCopy_length_options_deallocator(
-    //            input_x.as_c_void(),
-    //            input_x.len() * size_of::<f32>(),
-    //            MTLResourceOptions::StorageModeShared,
-    //            None,
-    //        )
-    //        .unwrap()
-    //};
-
-    //let buf_out = unsafe {
-    //    device
-    //        .newBufferWithBytesNoCopy_length_options_deallocator(
-    //            output.as_c_void(),
-    //            output.len() * size_of::<f32>(),
-    //            MTLResourceOptions::StorageModeShared,
-    //            None,
-    //        )
-    //        .unwrap()
-    //};
-
     for i in 0..N_REPEATS {
         // Initializing matrices (but not buffers) inside the loop seems to be of a small overhead.
         //
         // Initialising the small shared buffers inside the loop and the large W matrix outside
         // loop seems still be very fast. It's large W allocation that seems very slow.
 
-        eprintln!("mat_w rows {dim_d} columns {dim_n}");
+        //eprintln!("mat_w rows {dim_d} columns {dim_n}");
         let mat_w = unsafe {
             let mat = MPSMatrix::alloc();
             let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
@@ -254,6 +247,14 @@ fn run_matmul_metal(
 ///        llama2_rs::matmul::matmul(output, input_x, input_w, dim_k, dim_m);
 ///    }
 ///}
+
+unsafe fn new_private_mtl_buffer_from_slice_f16(
+    device: &Retained<ProtocolObject<dyn MTLDevice>>,
+    command_queue: &Retained<ProtocolObject<dyn MTLCommandQueue>>,
+    buf: &[f32],
+) -> Retained<ProtocolObject<dyn MTLBuffer>> {
+    todo!()
+}
 
 unsafe fn new_private_mtl_buffer_from_slice(
     device: &Retained<ProtocolObject<dyn MTLDevice>>,
