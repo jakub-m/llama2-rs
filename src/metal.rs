@@ -10,7 +10,7 @@ use objc2_metal::{
 use objc2_metal_performance_shaders::{
     MPSDataType, MPSMatrix, MPSMatrixDescriptor, MPSMatrixMultiplication,
 };
-use std::{ffi::c_void, ptr::NonNull};
+use std::{ffi::c_void, fmt::Debug, ptr::NonNull};
 
 pub struct MetalState {
     device: Retained<ProtocolObject<dyn MTLDevice>>,
@@ -193,7 +193,7 @@ pub trait WithMetalState {
 /// State is the state that is needed for efficient operation. This includes: Metal state, shared weight
 /// buffer state. Buffer indicates which buffer (from the state) is used for multiplication.
 /// `w_sel` - selects the buffer from the state.
-pub fn matmul_s<S: WithBufferRef<B> + WithMetalBuf<B> + WithMetalState, B: Copy>(
+pub fn matmul_s<S: WithBufferRef<B> + WithMetalBuf<B> + WithMetalState, B: Copy + Debug>(
     state: &S,
     xout: &mut [f32],
     x: &[f32],

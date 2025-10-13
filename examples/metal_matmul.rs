@@ -91,19 +91,19 @@ fn run_matmul_metal(
     output: &mut [f32],
     input_w: &[f32],
     input_x: &[f32],
-    dim_m: usize,
-    dim_k: usize,
+    dim_d: usize,
     dim_n: usize,
+    dim_u: usize,
 ) {
     let device = MTLCreateSystemDefaultDevice().unwrap();
-    dbg!(&device, dim_m, dim_k, dim_n);
+    dbg!(&device, dim_d, dim_n, dim_u);
     let command_queue = device.newCommandQueue().unwrap();
 
     // Allocating buffers and matrices (even if no-copy in shared mem) between each run, makes the
     // computation run at 126ms per matmul, vs. 5ms per matmul when all the buffers and matrices
     // are allocated only once.
 
-    let input_w_len_layer_bytes = dim_m * dim_k * size_of::<f32>();
+    let input_w_len_layer_bytes = dim_d * dim_n * size_of::<f32>();
 
     //let buf_input_w = unsafe {
     //    device
@@ -153,12 +153,13 @@ fn run_matmul_metal(
         // Initialising the small shared buffers inside the loop and the large W matrix outside
         // loop seems still be very fast. It's large W allocation that seems very slow.
 
+        eprintln!("mat_w rows {dim_d} columns {dim_n}");
         let mat_w = unsafe {
             let mat = MPSMatrix::alloc();
             let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-                dim_m as NSUInteger,
-                dim_k as NSUInteger,
-                dim_k * size_of::<f32>() as NSUInteger,
+                dim_d as NSUInteger,
+                dim_n as NSUInteger,
+                dim_n * size_of::<f32>() as NSUInteger,
                 MPSDataType::Float32,
             );
 
@@ -177,9 +178,9 @@ fn run_matmul_metal(
         unsafe {
             let mat = MPSMatrix::alloc();
             let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-                dim_k as NSUInteger,
                 dim_n as NSUInteger,
-                dim_n * size_of::<f32>() as NSUInteger,
+                dim_u as NSUInteger,
+                dim_u * size_of::<f32>() as NSUInteger,
                 MPSDataType::Float32,
             );
 
@@ -191,9 +192,9 @@ fn run_matmul_metal(
         unsafe {
             let mat = MPSMatrix::alloc();
             let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-                dim_m as NSUInteger,
-                dim_n as NSUInteger,
-                dim_n * size_of::<f32>() as NSUInteger,
+                dim_d as NSUInteger,
+                dim_u as NSUInteger,
+                dim_u * size_of::<f32>() as NSUInteger,
                 MPSDataType::Float32,
             );
 
@@ -209,9 +210,9 @@ fn run_matmul_metal(
             &device,
             false, // transpose
             false,
-            dim_m, // rows and cols
+            dim_d, // rows and cols
+            dim_u,
             dim_n,
-            dim_k,
             1.0, // alpha, beta
             0.0,
         );
