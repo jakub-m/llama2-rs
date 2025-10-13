@@ -121,33 +121,37 @@ fn run_matmul_metal(
     //let buf_input_w = unsafe { new_shared_mtl_buffer(&device, &input_w) };
     dbg!(&buf_input_w);
 
+    let buf_input_x =
+        unsafe { new_private_mtl_buffer_from_slice(&device, &command_queue, &input_x) };
+    let buf_out = unsafe { new_private_mtl_buffer_from_slice(&device, &command_queue, &output) };
+
+    //let buf_input_x = unsafe {
+    //    device
+    //        .newBufferWithBytesNoCopy_length_options_deallocator(
+    //            input_x.as_c_void(),
+    //            input_x.len() * size_of::<f32>(),
+    //            MTLResourceOptions::StorageModeShared,
+    //            None,
+    //        )
+    //        .unwrap()
+    //};
+
+    //let buf_out = unsafe {
+    //    device
+    //        .newBufferWithBytesNoCopy_length_options_deallocator(
+    //            output.as_c_void(),
+    //            output.len() * size_of::<f32>(),
+    //            MTLResourceOptions::StorageModeShared,
+    //            None,
+    //        )
+    //        .unwrap()
+    //};
+
     for i in 0..N_REPEATS {
         // Initializing matrices (but not buffers) inside the loop seems to be of a small overhead.
         //
         // Initialising the small shared buffers inside the loop and the large W matrix outside
         // loop seems still be very fast. It's large W allocation that seems very slow.
-
-        let buf_input_x = unsafe {
-            device
-                .newBufferWithBytesNoCopy_length_options_deallocator(
-                    input_x.as_c_void(),
-                    input_x.len() * size_of::<f32>(),
-                    MTLResourceOptions::StorageModeShared,
-                    None,
-                )
-                .unwrap()
-        };
-
-        let buf_out = unsafe {
-            device
-                .newBufferWithBytesNoCopy_length_options_deallocator(
-                    output.as_c_void(),
-                    output.len() * size_of::<f32>(),
-                    MTLResourceOptions::StorageModeShared,
-                    None,
-                )
-                .unwrap()
-        };
 
         let mat_w = unsafe {
             let mat = MPSMatrix::alloc();
