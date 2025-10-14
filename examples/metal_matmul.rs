@@ -43,7 +43,7 @@ use objc2_metal_performance_shaders::{
 use std::{ffi::c_void, ptr::NonNull, time::SystemTime};
 
 const N_LAYERS: usize = 32;
-const N_REPEATS: usize = 1000;
+const N_REPEATS: usize = 10_000;
 
 const DIM: usize = 4096;
 const HIDDEN_DIM: usize = 11008;
@@ -137,83 +137,85 @@ fn run_matmul_metal(
 
     // Convert weights to f16, once, into a private buffer. In the "real" code, the original f32
     // input should be deallocated.
-    execute_func_over_array(
-        &command_queue,
-        &convert_f32_to_f16_pso,
-        input_w.len(),
-        &buf_input_f32_w,
-        &target_buf_f16,
-    );
+    {
+        let start = SystemTime::now();
+        execute_func_over_array(
+            &command_queue,
+            &convert_f32_to_f16_pso,
+            input_w.len(),
+            &buf_input_f32_w,
+            &target_buf_f16,
+        );
+        let end = SystemTime::now();
+        let dt = end.duration_since(start).unwrap().as_secs_f32();
+        eprintln!("duration of conversion: {dt}s");
+    }
 
     // Prepare X input vector.
     let buf_input_x_f32 = unsafe { new_shared_mtl_buffer(&device, &input_x) };
     let buf_input_x_f16 = unsafe { new_private_mtl_buffer(&device, &input_x.len() * SIZE_OF_F16) };
-    execute_func_over_array(
-        &command_queue,
-        &convert_f32_to_f16_pso,
-        input_x.len(),
-        &buf_input_x_f32,
-        &buf_input_x_f16,
-    );
 
     // Prepare output vector. We should have such a f16 vector for each f32 vector. Maybe we can
     // use
     let buf_output_f16 = unsafe { new_private_mtl_buffer(&device, output.len() * SIZE_OF_F16) };
+    // At the end, f16 will be converted to f32 and placed in the output shared buffer.
+    let buf_output_f32 = unsafe { new_shared_mtl_buffer(&device, &output) };
 
-    // TODO output to the xout (mind the stride) as f16
-    // TODO convert to f32 output in place (mind the stride)
+    for i in 0..N_REPEATS {
+        eprint!("\rmetal {i}  ");
+        //execute_func_over_array(
+        //    &command_queue,
+        //    &convert_f32_to_f16_pso,
+        //    input_x.len(),
+        //    &buf_input_x_f32,
+        //    &buf_input_x_f16,
+        //);
 
-    //for i in 0..N_REPEATS {
-    //TODO convert X and OUT in each iteration.
+        assert_eq!(input_w_elem, dim_d * dim_n * N_LAYERS);
+        let mat_w = unsafe {
+            let mat = MPSMatrix::alloc();
+            let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
+                dim_d as NSUInteger,
+                dim_n as NSUInteger,
+                dim_n * SIZE_OF_F16 as NSUInteger,
+                MPSDataType::Float16,
+            );
+            MPSMatrix::initWithBuffer_offset_descriptor(
+                mat,
+                &buf_input_x_f16,
+                0, // input_w_len_layer_bytes * (i % N_LAYERS),
+                &desc,
+            )
+        };
 
-    assert_eq!(input_w_elem, dim_d * dim_n * N_LAYERS);
-    let mat_w = unsafe {
-        let mat = MPSMatrix::alloc();
-        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-            dim_d as NSUInteger,
-            dim_n as NSUInteger,
-            dim_n * SIZE_OF_F16 as NSUInteger,
-            MPSDataType::Float16,
-        );
-        MPSMatrix::initWithBuffer_offset_descriptor(
-            mat,
-            &buf_input_x_f16,
-            0, // input_w_len_layer_bytes * (i % N_LAYERS),
-            &desc,
-        )
-    };
+        let mat_x = unsafe {
+            let mat = MPSMatrix::alloc();
+            let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
+                dim_n as NSUInteger,
+                dim_u as NSUInteger,
+                dim_u * SIZE_OF_F16 as NSUInteger,
+                MPSDataType::Float16,
+            );
+            MPSMatrix::initWithBuffer_descriptor(mat, &buf_input_x_f16, &desc)
+        };
 
-    let mat_x = unsafe {
-        let mat = MPSMatrix::alloc();
-        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-            dim_n as NSUInteger,
-            dim_u as NSUInteger,
-            dim_u * SIZE_OF_F16 as NSUInteger,
-            MPSDataType::Float16,
-        );
-        MPSMatrix::initWithBuffer_descriptor(mat, &buf_input_x_f16, &desc)
-    };
+        let mat_out = unsafe {
+            let mat = MPSMatrix::alloc();
+            let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
+                dim_d as NSUInteger,
+                dim_u as NSUInteger,
+                dim_u * SIZE_OF_F16 as NSUInteger,
+                MPSDataType::Float16,
+            );
 
-    let mat_out = unsafe {
-        let mat = MPSMatrix::alloc();
-        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-            dim_d as NSUInteger,
-            dim_u as NSUInteger,
-            dim_u * SIZE_OF_F16 as NSUInteger,
-            MPSDataType::Float16,
-        );
+            MPSMatrix::initWithBuffer_descriptor(mat, &buf_output_f16, &desc)
+        };
 
-        MPSMatrix::initWithBuffer_descriptor(mat, &buf_output_f16, &desc)
-    };
+        let command_buffer = command_queue.commandBuffer().unwrap();
 
-    //    eprint!("\rmetal {i}  ");
-    let command_buffer = command_queue.commandBuffer().unwrap();
-    // encoder is needed to encode the function invocations.
-    let compute_encoder = command_buffer.computeCommandEncoder().unwrap();
-
-    let matmul = unsafe {
-        let matmul_alloc = MPSMatrixMultiplication::alloc();
-        MPSMatrixMultiplication::initWithDevice_transposeLeft_transposeRight_resultRows_resultColumns_interiorColumns_alpha_beta(
+        let matmul = unsafe {
+            let matmul_alloc = MPSMatrixMultiplication::alloc();
+            MPSMatrixMultiplication::initWithDevice_transposeLeft_transposeRight_resultRows_resultColumns_interiorColumns_alpha_beta(
             matmul_alloc,
             &device,
             false, // transpose
@@ -224,18 +226,28 @@ fn run_matmul_metal(
             1.0, // alpha, beta
             0.0,
         )
-    };
-    unsafe {
-        matmul.encodeToCommandBuffer_leftMatrix_rightMatrix_resultMatrix(
-            &command_buffer,
-            &mat_w,
-            &mat_x,
-            &mat_out,
-        );
+        };
+        unsafe {
+            matmul.encodeToCommandBuffer_leftMatrix_rightMatrix_resultMatrix(
+                &command_buffer,
+                &mat_w,
+                &mat_x,
+                &mat_out,
+            );
+        }
+        command_buffer.commit();
+        command_buffer.waitUntilCompleted();
+        assert_eq!(command_buffer.status(), MTLCommandBufferStatus::Completed);
+
+        //// Convert output back to f32 after the multiplication.
+        //execute_func_over_array(
+        //    &command_queue,
+        //    &convert_f16_to_f32_pso,
+        //    output.len(),
+        //    &buf_output_f16,
+        //    &buf_output_f32,
+        //);
     }
-    command_buffer.commit();
-    command_buffer.waitUntilCompleted();
-    //}
 }
 
 fn execute_func_over_array(
@@ -312,6 +324,7 @@ unsafe fn new_private_mtl_buffer_from_slice(
     blit_command_encoder.endEncoding();
     command_buffer.commit();
     command_buffer.waitUntilCompleted();
+    assert_eq!(command_buffer.status(), MTLCommandBufferStatus::Completed);
     private_buf
 }
 
