@@ -9,6 +9,7 @@ To run tests you need `tokenizer.bin` from the [original repo][1].
 
 # Learnings
 
+
 Rust:
 
 - Using Rust-ish type (like `TokenId` instead of `usize`) helps understanding the code.
@@ -22,6 +23,7 @@ Rust:
   tricky. Adding extra asserts here and there to see if we didn't pass a slice
   that has unexpected size (where we know the size), saves a lot of trouble.
 
+
 Rayon:
 
 - Use `RAYON_NUM_THREADS=1` for sequential execution (good for debugging).
@@ -34,16 +36,21 @@ Metal:
   magically faster.
 
 - I didn't see much difference in performance when using shared or private GPU
-memory buffers. Maybe it's because of specific access patterns of the program.
+  memory buffers. Maybe it's because of specific access patterns of the
+  program.
 
-Other tools:
+
+Other:
 
 - ChatGPT was _very useful_ in learning `lldb` commands.
 
 - [mermaid](https://mermaid.live) is an absolutely fantastic tool for diagrams.
 
 - Monitor if you memory does not start to swap , with `sysctl vm.swapusage` or
-Activity Monitor. Your computation will instantly become dog slow.
+  -Activity Monitor. Your computation will instantly become dog slow.
+
+- 65520 is already an infinity in `f16`.
+
 
 [par_iter]: https://docs.rs/rayon/latest/rayon/iter/index.html
 
@@ -298,6 +305,7 @@ make objdump-llama | egrep '^000| \tf' | grep llama2_rs -A1
 
 - [metal_add.rs](examples/metal_add.rs) implements a simple addition in GPU using a shared memory buffer.
 - [metal_matmul.rs](examples/metal_matmul.rs) runs matrix multiplication on GPU.
+- https://developer.apple.com/documentation/metal/setting-up-a-command-structure
 
 Running llama2 (`make run-napalm`) with matmul naively computed in GPU (shared
 memory buffers, Metal native matmul) yields ~20% GPU utilization, and ~60
@@ -307,10 +315,12 @@ seconds per token. For CPU with Rayon, it's ~20 sec per token.
 
 - GPU: Use private GPU memory for W matrices that don't change. Check first
   with benchamrking if this gives better yield.
+    - https://developer.apple.com/documentation/metal/choosing-a-resource-storage-mode-for-apple-gpus
+    - https://developer.apple.com/library/archive/documentation/3DDrawing/Conceptual/MTLBestPracticesGuide/ResourceOptions.html
 
 - Pipelining of GPU work, do not wait until finished, carry on in parallel when
   possible.
 
 - Run comput. in GPU and CPU at once (2x yield!)
 
-- Dynamic quantization, to f16 or int
+
