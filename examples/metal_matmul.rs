@@ -18,12 +18,12 @@
 //! - 111.0156 ms GPU
 //! - 88.0205 ms CPU (rayon)
 
-use llama2_rs::matmul::matmul;
 use objc2::{AnyThread, rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::{NSUInteger, ns_string};
 use objc2_metal::{
-    MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLCopyAllDevices, MTLCreateSystemDefaultDevice, MTLDevice, MTLLibrary, MTLResourceOptions,
+    MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder,
+    MTLCommandQueue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLCopyAllDevices,
+    MTLCreateSystemDefaultDevice, MTLDevice, MTLFunction, MTLLibrary, MTLResourceOptions, MTLSize,
 };
 use objc2_metal_performance_shaders::{
     MPSDataType, MPSMatrix, MPSMatrixDescriptor, MPSMatrixMultiplication,
@@ -33,7 +33,16 @@ use std::{ffi::c_void, ptr::NonNull, time::SystemTime};
 const N_LAYERS: usize = 32;
 const N_REPEATS: usize = 1000;
 
+const DIM: usize = 4096;
+const HIDDEN_DIM: usize = 11008;
+
 const CONVERT_F16_SOURCE: &str = include_str!("./convert_f16.metal");
+
+type RetainedMTLBuffer = Retained<ProtocolObject<dyn MTLBuffer>>;
+type RetainedMTLCommandQueue = Retained<ProtocolObject<dyn MTLCommandQueue>>;
+type RetainedMTLDevice = Retained<ProtocolObject<dyn MTLDevice>>;
+type RetainedMTLFunction = Retained<ProtocolObject<dyn MTLFunction>>;
+type RetainedMTLComputePipelineState = Retained<ProtocolObject<dyn MTLComputePipelineState>>;
 
 fn main() {
     for (i, d) in MTLCopyAllDevices().iter().enumerate() {
@@ -44,18 +53,9 @@ fn main() {
     // m 1 2 3      k 1 2       m 22 28
     // m 4 5 6  x   k 3 4  =    m 49 64
     // m 7 8 9      k 5 6       m 76 100
-    //
-    //
-    //
-    //
 
-    //let dim_m: usize = 1_000_000;
-    //let dim_k: usize = 1_000;
-    let dim = 4096;
-    let hidden_dim = 11008;
-
-    let dim_m: usize = hidden_dim;
-    let dim_k: usize = dim;
+    let dim_m: usize = HIDDEN_DIM;
+    let dim_k: usize = DIM;
     let dim_n: usize = 1;
 
     let input_w: Vec<f32> = init_vec(dim_m * dim_k * N_LAYERS);
@@ -67,18 +67,6 @@ fn main() {
     eprintln!("{t} start matmul ", t = elapsed(start));
 
     run_matmul_metal(&mut output, &input_w, &input_x, dim_m, dim_k, dim_n);
-
-    //run_matmul_cpu(
-    //    n_repeats,
-    //    &mut output,
-    //    &input_w,
-    //    &input_x,
-    //    dim_m,
-    //    dim_k,
-    //    dim_n,
-    //);
-
-    //---
 
     eprint!("\r");
     eprintln!("{} finished", elapsed(start));
@@ -98,6 +86,8 @@ fn run_matmul_metal(
     dim_u: usize,
 ) {
     let device = MTLCreateSystemDefaultDevice().unwrap();
+    dbg!(&device, dim_d, dim_n, dim_u);
+    dbg!(dim_d * dim_n * dim_u);
 
     // Library with the functions
     let convert_f16_source = ns_string!(CONVERT_F16_SOURCE);
@@ -122,145 +112,194 @@ fn run_matmul_metal(
         .unwrap();
     // End library with the functions
 
-    dbg!(&device, dim_d, dim_n, dim_u);
     let command_queue = device.newCommandQueue().unwrap();
 
     // Allocating buffers and matrices (even if no-copy in shared mem) between each run, makes the
     // computation run at 126ms per matmul, vs. 5ms per matmul when all the buffers and matrices
     // are allocated only once.
 
-    let input_w_len_layer_bytes = dim_d * dim_n * size_of::<f32>();
+    //let input_w_len_layer_bytes = dim_d * dim_n * size_of::<f32>();
 
-    let buf_input_w =
-        unsafe { new_private_mtl_buffer_from_slice(&device, &command_queue, &input_w) };
-    //let buf_input_w = unsafe { new_shared_mtl_buffer(&device, &input_w) };
-    dbg!(&buf_input_w);
+    let buf_input_f32_w = unsafe { new_shared_mtl_buffer(&device, &input_w) };
+    let target_buf_f16 =
+        unsafe { new_private_mtl_buffer(&device, input_w.len() * size_of::<f32>() / 2) };
 
-    let buf_input_x =
-        unsafe { new_private_mtl_buffer_from_slice(&device, &command_queue, &input_x) };
-    let buf_out = unsafe { new_private_mtl_buffer_from_slice(&device, &command_queue, &output) };
+    execute_func_over_array(
+        &command_queue,
+        &convert_f32_to_f16_pso,
+        input_w.len(),
+        &buf_input_f32_w,
+        &target_buf_f16,
+    );
 
-    for i in 0..N_REPEATS {
-        // Initializing matrices (but not buffers) inside the loop seems to be of a small overhead.
-        //
-        // Initialising the small shared buffers inside the loop and the large W matrix outside
-        // loop seems still be very fast. It's large W allocation that seems very slow.
+    execute_func_over_array(
+        &command_queue,
+        &convert_f16_to_f32_pso,
+        input_w.len(),
+        &target_buf_f16,
+        &buf_input_f32_w,
+    );
 
-        //eprintln!("mat_w rows {dim_d} columns {dim_n}");
-        let mat_w = unsafe {
-            let mat = MPSMatrix::alloc();
-            let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-                dim_d as NSUInteger,
-                dim_n as NSUInteger,
-                dim_n * size_of::<f32>() as NSUInteger,
-                MPSDataType::Float32,
-            );
+    let n = 65_519; // 65_520 is inf? // https://flop.evanau.dev/half-precision-converter
+    dbg!(input_w.len(), n);
+    eprintln!("{:?}", &input_w[n..n + 10]);
 
-            // Changing offsets in each iteration (offset to layer) does not affect performance, or
-            // affects it insignivicantly (unsurprisingly).
-            MPSMatrix::initWithBuffer_offset_descriptor(
-                mat,
-                &buf_input_w,
-                input_w_len_layer_bytes * (i % N_LAYERS),
-                &desc,
-            )
-        };
-        //dbg!(&mat_w);
+    //let buf_input_x =
+    //    unsafe { new_private_mtl_buffer_from_slice(&device, &command_queue, &input_x) };
+    //let buf_out = unsafe { new_private_mtl_buffer_from_slice(&device, &command_queue, &output) };
 
-        let mat_x;
-        unsafe {
-            let mat = MPSMatrix::alloc();
-            let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-                dim_n as NSUInteger,
-                dim_u as NSUInteger,
-                dim_u * size_of::<f32>() as NSUInteger,
-                MPSDataType::Float32,
-            );
+    //for i in 0..N_REPEATS {
+    //    // Initializing matrices (but not buffers) inside the loop seems to be of a small overhead.
+    //    //
+    //    // Initialising the small shared buffers inside the loop and the large W matrix outside
+    //    // loop seems still be very fast. It's large W allocation that seems very slow.
 
-            mat_x = MPSMatrix::initWithBuffer_descriptor(mat, &buf_input_x, &desc);
-        }
-        //dbg!(&mat_x);
+    //    //eprintln!("mat_w rows {dim_d} columns {dim_n}");
+    //    let mat_w = unsafe {
+    //        let mat = MPSMatrix::alloc();
+    //        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
+    //            dim_d as NSUInteger,
+    //            dim_n as NSUInteger,
+    //            dim_n * size_of::<f32>() as NSUInteger,
+    //            MPSDataType::Float32,
+    //        );
 
-        let mat_out;
-        unsafe {
-            let mat = MPSMatrix::alloc();
-            let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
-                dim_d as NSUInteger,
-                dim_u as NSUInteger,
-                dim_u * size_of::<f32>() as NSUInteger,
-                MPSDataType::Float32,
-            );
+    //        // Changing offsets in each iteration (offset to layer) does not affect performance, or
+    //        // affects it insignivicantly (unsurprisingly).
+    //        MPSMatrix::initWithBuffer_offset_descriptor(
+    //            mat,
+    //            &buf_input_w,
+    //            input_w_len_layer_bytes * (i % N_LAYERS),
+    //            &desc,
+    //        )
+    //    };
+    //    //dbg!(&mat_w);
 
-            mat_out = MPSMatrix::initWithBuffer_descriptor(mat, &buf_out, &desc);
-        }
-        //dbg!(&mat_out);
+    //    let mat_x;
+    //    unsafe {
+    //        let mat = MPSMatrix::alloc();
+    //        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
+    //            dim_n as NSUInteger,
+    //            dim_u as NSUInteger,
+    //            dim_u * size_of::<f32>() as NSUInteger,
+    //            MPSDataType::Float32,
+    //        );
 
-        let matmul;
-        unsafe {
-            let matmul_alloc = MPSMatrixMultiplication::alloc();
-            matmul = MPSMatrixMultiplication::initWithDevice_transposeLeft_transposeRight_resultRows_resultColumns_interiorColumns_alpha_beta(
-            matmul_alloc,
-            &device,
-            false, // transpose
-            false,
-            dim_d, // rows and cols
-            dim_u,
-            dim_n,
-            1.0, // alpha, beta
-            0.0,
-        );
-        };
-        //dbg!(&matmul);
+    //        mat_x = MPSMatrix::initWithBuffer_descriptor(mat, &buf_input_x, &desc);
+    //    }
+    //    //dbg!(&mat_x);
 
-        eprint!("\rmetal {i}  ");
+    //    let mat_out;
+    //    unsafe {
+    //        let mat = MPSMatrix::alloc();
+    //        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
+    //            dim_d as NSUInteger,
+    //            dim_u as NSUInteger,
+    //            dim_u * size_of::<f32>() as NSUInteger,
+    //            MPSDataType::Float32,
+    //        );
 
-        let command_buffer = command_queue.commandBuffer().unwrap();
+    //        mat_out = MPSMatrix::initWithBuffer_descriptor(mat, &buf_out, &desc);
+    //    }
+    //    //dbg!(&mat_out);
 
-        //dbg!(&command_buffer);
-        // no compute encoder, because we don't have our library functions.
+    //    let matmul;
+    //    unsafe {
+    //        let matmul_alloc = MPSMatrixMultiplication::alloc();
+    //        matmul = MPSMatrixMultiplication::initWithDevice_transposeLeft_transposeRight_resultRows_resultColumns_interiorColumns_alpha_beta(
+    //        matmul_alloc,
+    //        &device,
+    //        false, // transpose
+    //        false,
+    //        dim_d, // rows and cols
+    //        dim_u,
+    //        dim_n,
+    //        1.0, // alpha, beta
+    //        0.0,
+    //    );
+    //    };
+    //    //dbg!(&matmul);
 
-        unsafe {
-            matmul.encodeToCommandBuffer_leftMatrix_rightMatrix_resultMatrix(
-                &command_buffer,
-                &mat_w,
-                &mat_x,
-                &mat_out,
-            );
-        }
-        command_buffer.commit();
-        command_buffer.waitUntilCompleted();
-    }
+    //    eprint!("\rmetal {i}  ");
+
+    //    let command_buffer = command_queue.commandBuffer().unwrap();
+
+    //    // encoder is needed to encode the function invocations.
+    //    let compute_encoder = command_buffer.computeCommandEncoder().unwrap();
+
+    //    unsafe {
+    //        matmul.encodeToCommandBuffer_leftMatrix_rightMatrix_resultMatrix(
+    //            &command_buffer,
+    //            &mat_w,
+    //            &mat_x,
+    //            &mat_out,
+    //        );
+    //    }
+    //    command_buffer.commit();
+    //    command_buffer.waitUntilCompleted();
+    //}
 }
 
-///fn run_matmul_cpu(
-///    n_repeats: usize,
-///    output: &mut [f32],
-///    input_w: &[f32],
-///    input_x: &[f32],
-///    dim_m: usize,
-///    dim_k: usize,
-///    dim_n: usize,
-///) {
-///    assert_eq!(dim_n, 1);
-///    for i in 0..n_repeats {
-///        eprint!("\rcpu {i}  ");
-///        llama2_rs::matmul::matmul(output, input_x, input_w, dim_k, dim_m);
-///    }
-///}
+fn execute_func_over_array(
+    command_queue: &RetainedMTLCommandQueue,
+    convert_func: &RetainedMTLComputePipelineState,
+    n_elem: usize,
+    source: &RetainedMTLBuffer,
+    target: &RetainedMTLBuffer,
+) {
+    let command_buffer = command_queue.commandBuffer().unwrap();
+    let compute_encoder = command_buffer.computeCommandEncoder().unwrap();
 
-unsafe fn new_private_mtl_buffer_from_slice_f16(
-    device: &Retained<ProtocolObject<dyn MTLDevice>>,
-    command_queue: &Retained<ProtocolObject<dyn MTLCommandQueue>>,
-    buf: &[f32],
-) -> Retained<ProtocolObject<dyn MTLBuffer>> {
-    todo!()
+    compute_encoder.setComputePipelineState(&convert_func);
+    unsafe {
+        compute_encoder.setBuffer_offset_atIndex(Some(&source), 0, 0);
+        compute_encoder.setBuffer_offset_atIndex(Some(&target), 0, 1);
+    }
+    let (grid_size, thread_group_size) =
+        grid_and_thread_group_size_for_linear_op(n_elem, convert_func);
+
+    compute_encoder.dispatchThreads_threadsPerThreadgroup(grid_size, thread_group_size);
+    compute_encoder.endEncoding();
+    command_buffer.commit();
+    command_buffer.waitUntilCompleted();
+    assert_eq!(command_buffer.status(), MTLCommandBufferStatus::Completed);
+}
+
+// TODO convert w to f16 ONCE and load such converted to private buffer. the private buffer is 1/2
+// size of the original one.
+// TODO right before mtmul, convert X in place to f16 (mind the stride)
+// TODO output to the xout (mind the stride) as f16
+// TODO convert to f32 output in place (mind the stride)
+
+fn grid_and_thread_group_size_for_linear_op(
+    array_len_elem: usize,
+    func: &RetainedMTLComputePipelineState,
+) -> (MTLSize, MTLSize) {
+    let grid_size = MTLSize {
+        width: array_len_elem,
+        height: 1,
+        depth: 1,
+    };
+
+    let max_threads_per_group = func.maxTotalThreadsPerThreadgroup();
+    let width = if max_threads_per_group > array_len_elem {
+        array_len_elem
+    } else {
+        max_threads_per_group
+    };
+    let thread_group_size = MTLSize {
+        width,
+        height: 1,
+        depth: 1,
+    };
+    (grid_size, thread_group_size)
 }
 
 unsafe fn new_private_mtl_buffer_from_slice(
-    device: &Retained<ProtocolObject<dyn MTLDevice>>,
-    command_queue: &Retained<ProtocolObject<dyn MTLCommandQueue>>,
+    device: &RetainedMTLDevice,
+    command_queue: &RetainedMTLCommandQueue,
     buf: &[f32],
-) -> Retained<ProtocolObject<dyn MTLBuffer>> {
+) -> RetainedMTLBuffer {
     let shared_buf = unsafe { new_shared_mtl_buffer(&device, buf) };
     let buf_size = buf.len() * size_of::<f32>();
     let private_buf = device
@@ -293,11 +332,20 @@ unsafe fn new_shared_mtl_buffer(
             .newBufferWithBytesNoCopy_length_options_deallocator(
                 buf.as_c_void(),
                 buf.len() * size_of::<f32>(),
-                MTLResourceOptions::StorageModeShared, // TODO here initialize private
+                MTLResourceOptions::StorageModeShared,
                 None,
             )
             .unwrap()
     }
+}
+
+unsafe fn new_private_mtl_buffer(
+    device: &RetainedMTLDevice,
+    buf_size_bytes: usize,
+) -> RetainedMTLBuffer {
+    device
+        .newBufferWithLength_options(buf_size_bytes, MTLResourceOptions::StorageModePrivate)
+        .unwrap()
 }
 
 trait AsNonNull {
@@ -325,7 +373,8 @@ impl<T> AsNonNull for &mut [T] {
 }
 
 fn init_vec(n: usize) -> Vec<f32> {
-    (0..n).map(|i| 0.01_f32 * i as f32).collect()
+    //(0..n).map(|i| 0.01_f32 * i as f32).collect()
+    (0..n).map(|i| 1_f32).collect()
 }
 
 fn elapsed(start: SystemTime) -> f32 {

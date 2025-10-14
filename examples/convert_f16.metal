@@ -1,3 +1,4 @@
+// vim: ft=c
 #include <metal_stdlib>
 using namespace metal;
 
@@ -7,6 +8,7 @@ kernel void convert_f32_to_f16(
     uint gid [[thread_position_in_grid]]
 ) {
     out[gid] = half(in[gid]);
+    //out[gid] = gid;
 }
 
 kernel void convert_f16_to_f32(
@@ -15,5 +17,6 @@ kernel void convert_f16_to_f32(
     uint gid [[thread_position_in_grid]]
 ) {
     out[gid] = float(in[gid]);
+    //out[gid] = gud;
 }
 
