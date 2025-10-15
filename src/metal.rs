@@ -5,25 +5,35 @@ use objc2::runtime::ProtocolObject;
 use objc2_foundation::NSUInteger;
 use objc2_metal::{
     MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLCreateSystemDefaultDevice, MTLDevice, MTLResourceOptions,
+    MTLComputePipelineState, MTLCreateSystemDefaultDevice, MTLDevice, MTLFunction,
+    MTLResourceOptions,
 };
 use objc2_metal_performance_shaders::{
     MPSDataType, MPSMatrix, MPSMatrixDescriptor, MPSMatrixMultiplication,
 };
 use std::{ffi::c_void, fmt::Debug, ptr::NonNull};
 
+const SIZE_OF_F16: usize = size_of::<f32>() / 2;
+
+type RetainedMTLBuffer = Retained<ProtocolObject<dyn MTLBuffer>>;
+type RetainedMTLCommandQueue = Retained<ProtocolObject<dyn MTLCommandQueue>>;
+type RetainedMTLDevice = Retained<ProtocolObject<dyn MTLDevice>>;
+type RetainedMTLFunction = Retained<ProtocolObject<dyn MTLFunction>>;
+type RetainedMTLComputePipelineState = Retained<ProtocolObject<dyn MTLComputePipelineState>>;
+
 pub struct MetalState {
-    device: Retained<ProtocolObject<dyn MTLDevice>>,
-    command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
+    device: RetainedMTLDevice,
+    command_queue: RetainedMTLCommandQueue,
     // whole mtl buffer
-    pub mtl_buffer_wq: Retained<ProtocolObject<dyn MTLBuffer>>,
-    pub mtl_buffer_wk: Retained<ProtocolObject<dyn MTLBuffer>>,
-    pub mtl_buffer_wv: Retained<ProtocolObject<dyn MTLBuffer>>,
-    pub mtl_buffer_wo: Retained<ProtocolObject<dyn MTLBuffer>>,
-    pub mtl_buffer_w1: Retained<ProtocolObject<dyn MTLBuffer>>,
-    pub mtl_buffer_w2: Retained<ProtocolObject<dyn MTLBuffer>>,
-    pub mtl_buffer_w3: Retained<ProtocolObject<dyn MTLBuffer>>,
-    pub mtl_buffer_wcls: Retained<ProtocolObject<dyn MTLBuffer>>,
+    pub mtl_buffer_wq: RetainedMTLBuffer,
+    //pub mtl_buffer_wq_f16: RetainedMTLBuffer,
+    pub mtl_buffer_wk: RetainedMTLBuffer,
+    pub mtl_buffer_wv: RetainedMTLBuffer,
+    pub mtl_buffer_wo: RetainedMTLBuffer,
+    pub mtl_buffer_w1: RetainedMTLBuffer,
+    pub mtl_buffer_w2: RetainedMTLBuffer,
+    pub mtl_buffer_w3: RetainedMTLBuffer,
+    pub mtl_buffer_wcls: RetainedMTLBuffer,
 }
 
 pub enum BufferType {
@@ -43,8 +53,7 @@ impl MetalState {
         wcls: &[f32],
         buffer_type: BufferType,
     ) -> Self {
-        let device: Retained<ProtocolObject<dyn MTLDevice>> =
-            MTLCreateSystemDefaultDevice().unwrap();
+        let device: RetainedMTLDevice = MTLCreateSystemDefaultDevice().unwrap();
         let command_queue = device.newCommandQueue().unwrap();
 
         let mtl_buffer_wq;
@@ -70,6 +79,7 @@ impl MetalState {
             BufferType::Private => {
                 mtl_buffer_wq =
                     unsafe { Self::new_private_mtl_buffer_from_slice(&device, &command_queue, wq) };
+
                 mtl_buffer_wk =
                     unsafe { Self::new_private_mtl_buffer_from_slice(&device, &command_queue, wk) };
                 mtl_buffer_wv =
@@ -103,10 +113,10 @@ impl MetalState {
     }
 
     unsafe fn new_private_mtl_buffer_from_slice(
-        device: &Retained<ProtocolObject<dyn MTLDevice>>,
-        command_queue: &Retained<ProtocolObject<dyn MTLCommandQueue>>,
+        device: &RetainedMTLDevice,
+        command_queue: &RetainedMTLCommandQueue,
         buf: &[f32],
-    ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
+    ) -> RetainedMTLBuffer {
         let shared_buf = unsafe { Self::new_shared_mtl_buffer(&device, buf) };
         let buf_size = buf.len() * size_of::<f32>();
         let private_buf = device
@@ -130,16 +140,22 @@ impl MetalState {
         private_buf
     }
 
-    unsafe fn new_shared_mtl_buffer(
-        device: &Retained<ProtocolObject<dyn MTLDevice>>,
-        buf: &[f32],
-    ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
+    unsafe fn new_private_mtl_buffer(
+        device: &RetainedMTLDevice,
+        buf_size_bytes: usize,
+    ) -> RetainedMTLBuffer {
+        device
+            .newBufferWithLength_options(buf_size_bytes, MTLResourceOptions::StorageModePrivate)
+            .unwrap()
+    }
+
+    unsafe fn new_shared_mtl_buffer(device: &RetainedMTLDevice, buf: &[f32]) -> RetainedMTLBuffer {
         unsafe {
             device
                 .newBufferWithBytesNoCopy_length_options_deallocator(
                     buf.as_c_void(),
                     buf.len() * size_of::<f32>(),
-                    MTLResourceOptions::StorageModeShared, // TODO here initialize private
+                    MTLResourceOptions::StorageModeShared,
                     None,
                 )
                 .unwrap()
@@ -181,7 +197,7 @@ pub trait WithBufferRef<B> {
 /// Return already pre-initialized buffer suitable for GPU usage. The purpose is to initialise the
 /// buffers exactly once (in shared or in GPU-private memory).
 pub trait WithMetalBuf<B> {
-    fn metal_buffer(&self, b_sel: B) -> Option<&Retained<ProtocolObject<dyn MTLBuffer>>>;
+    fn metal_buffer(&self, b_sel: B) -> Option<&RetainedMTLBuffer>;
 }
 
 /// Return state of Metal, which is initialised at the very beginning. This state can also

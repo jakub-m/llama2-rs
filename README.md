@@ -305,7 +305,6 @@ make objdump-llama | egrep '^000| \tf' | grep llama2_rs -A1
 
 - [metal_add.rs](examples/metal_add.rs) implements a simple addition in GPU using a shared memory buffer.
 - [metal_matmul.rs](examples/metal_matmul.rs) runs matrix multiplication on GPU.
-- https://developer.apple.com/documentation/metal/setting-up-a-command-structure
 
 Running llama2 (`make run-napalm`) with matmul naively computed in GPU (shared
 memory buffers, Metal native matmul) yields ~20% GPU utilization, and ~60
@@ -323,4 +322,8 @@ seconds per token. For CPU with Rayon, it's ~20 sec per token.
 
 - Run comput. in GPU and CPU at once (2x yield!)
 
+
+# Related
+#
+- https://developer.apple.com/documentation/metal/setting-up-a-command-structure - Setting up a command structure
 
