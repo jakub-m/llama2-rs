@@ -570,7 +570,6 @@ pub fn matmul_s_f16<S: WithMetalBuf<B> + WithMetalState, B: Copy + Debug>(
         xout_len = xout.len()
     );
     let buf_xout_f32 = unsafe { metal_state.new_shared_mtl_buffer(&xout) };
-    let buf_xout_f16 = unsafe { metal_state.new_private_mtl_buffer(xout.len() * size_of::<F16>()) };
 
     // Now define the matrices.
     // X matrics (vector) is just a flat array.
@@ -592,11 +591,11 @@ pub fn matmul_s_f16<S: WithMetalBuf<B> + WithMetalState, B: Copy + Debug>(
         let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
             dim_d as NSUInteger,
             dim_u as NSUInteger,
-            dim_u * size_of::<F16>() as NSUInteger,
-            MPSDataType::Float16,
+            dim_u * size_of::<f32>() as NSUInteger,
+            MPSDataType::Float32,
         );
 
-        MPSMatrix::initWithBuffer_descriptor(mat, &buf_xout_f16, &desc)
+        MPSMatrix::initWithBuffer_descriptor(mat, &buf_xout_f32, &desc)
     };
 
     let command_buffer = metal_state.command_queue.commandBuffer().unwrap();
@@ -626,16 +625,8 @@ pub fn matmul_s_f16<S: WithMetalBuf<B> + WithMetalState, B: Copy + Debug>(
     // TODO Do not wait for the reslt yet!
     command_buffer.commit();
     command_buffer.waitUntilCompleted();
-
-    // Now convert f16 to f32 into the shared buffer.
     // TODO do not wait for the result yet
-    metal_state.execute_func_over_array_wait(
-        &metal_state.func_pso_convert_f16_to_f32,
-        x.len(),
-        &buf_xout_f16,
-        &buf_xout_f32,
-    );
-
+    // TODO Now convert f16 to f32 into the shared buffer.
     // TODO convert f16 to f32 after matmul.
 }
 

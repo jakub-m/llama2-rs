@@ -51,6 +51,16 @@ Other:
 
 - 65520 is already an infinity in `f16`.
 
+- Using `f16` for some matrices, works, for other totally corrupts the output.
+
+- Apple M2 Metal does not support matrix multiplication on BFloat16:
+
+```
+MPSMatrixMultiplication.mm:3260: failed assertion `Input data type must be one
+of MPSDataTypeFloat32, MPSDataTypeFloat16, MPSDataTypeInt8, or
+MPSDataTypeInt16.'
+```
+
 
 [par_iter]: https://docs.rs/rayon/latest/rayon/iter/index.html
 
