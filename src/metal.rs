@@ -47,7 +47,7 @@ pub struct MetalState {
     // whole mtl buffer
     pub mtl_buffer_wq_f16: RetainedMTLBuffer,
     pub mtl_buffer_wk_f16: RetainedMTLBuffer,
-    pub mtl_buffer_wv: RetainedMTLBuffer,
+    pub mtl_buffer_wv_f16: RetainedMTLBuffer,
     pub mtl_buffer_wo: RetainedMTLBuffer,
     pub mtl_buffer_w1: RetainedMTLBuffer,
     pub mtl_buffer_w2: RetainedMTLBuffer,
@@ -107,7 +107,7 @@ impl MetalState {
 
         let (mtl_buffer_wq_f16, _) = new_f16_buffer(wq);
         let (mtl_buffer_wk_f16, _) = new_f16_buffer(wk);
-        let mtl_buffer_wv = unsafe { Self::new_shared_mtl_buffer_priv(&device, wv) };
+        let (mtl_buffer_wv_f16, _) = new_f16_buffer(wv);
         let mtl_buffer_wo = unsafe { Self::new_shared_mtl_buffer_priv(&device, wo) };
         let mtl_buffer_w1 = unsafe { Self::new_shared_mtl_buffer_priv(&device, w1) };
         let mtl_buffer_w2 = unsafe { Self::new_shared_mtl_buffer_priv(&device, w2) };
@@ -122,7 +122,7 @@ impl MetalState {
             func_pso_convert_f16_to_f32,
             mtl_buffer_wq_f16,
             mtl_buffer_wk_f16,
-            mtl_buffer_wv,
+            mtl_buffer_wv_f16,
             mtl_buffer_wo,
             mtl_buffer_w1,
             mtl_buffer_w2,

@@ -576,7 +576,7 @@ impl<'a> WithMetalBuf<BufferSelector> for MatmulState<'a> {
         match b_sel {
             BufferSelector::WqF16 => Some(&ms.mtl_buffer_wq_f16),
             BufferSelector::WkF16 => Some(&ms.mtl_buffer_wk_f16),
-            BufferSelector::Wv => Some(&ms.mtl_buffer_wv),
+            BufferSelector::WvF16 => Some(&ms.mtl_buffer_wv_f16),
             BufferSelector::Wo => Some(&ms.mtl_buffer_wo),
             BufferSelector::W1 => Some(&ms.mtl_buffer_w1),
             BufferSelector::W2 => Some(&ms.mtl_buffer_w2),
@@ -591,7 +591,7 @@ impl<'a> WithMetalBuf<BufferSelector> for MatmulState<'a> {
 enum BufferSelector {
     WqF16,
     WkF16,
-    Wv,
+    WvF16,
     Wo,
     W1,
     W2,
@@ -950,11 +950,11 @@ fn forward<'a>(
             kv_dim,
         ); // s_k = wk(l) @ xb
         // matmul(s->v, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
-        matmul_s(
+        matmul_s_f16(
             mms,
             s_v,
             &s.xb,
-            BufferSelector::Wv,
+            BufferSelector::WvF16,
             Offset::at_elem(l, dim * kv_dim),
             dim,
             kv_dim,
