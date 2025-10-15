@@ -5,7 +5,7 @@ mod sliceutil;
 
 #[allow(unused_imports)]
 use llama2_rs::metal::{MetalState, matmul as metal_matmul};
-use llama2_rs::metal::{WithMetalBuf, WithMetalState, matmul_s_f16};
+use llama2_rs::metal::{WithMetalBuf, WithMetalState, matmul_s_f16_nowait, wait};
 #[allow(unused_imports)]
 use logging::*;
 #[allow(unused_imports)]
@@ -929,7 +929,7 @@ fn forward<'a>(
         let s_v = s.value_cache.slice_at_mut(loff + pos * kv_dim, kv_dim);
 
         // qkv matmuls for this position
-        matmul_s_f16(
+        matmul_s_f16_nowait(
             mms,
             &mut s.q,
             &s.xb,
@@ -940,7 +940,7 @@ fn forward<'a>(
         ); // s.q = wq(l) @ xb
 
         // matmul(s->k, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
-        matmul_s_f16(
+        matmul_s_f16_nowait(
             mms,
             s_k,
             &s.xb,
@@ -950,7 +950,7 @@ fn forward<'a>(
             kv_dim,
         ); // s_k = wk(l) @ xb
         // matmul(s->v, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
-        matmul_s_f16(
+        wait(matmul_s_f16_nowait(
             mms,
             s_v,
             &s.xb,
@@ -958,7 +958,7 @@ fn forward<'a>(
             Offset::at_elem(l, dim * kv_dim),
             dim,
             kv_dim,
-        ); // s_v = wv(l) @ xb
+        )); // s_v = wv(l) @ xb
 
         // RoPE relative positional encoding: complex-valued rotate q and k in each head
         for i_dim in (0..dim).step_by(2) {
@@ -1034,7 +1034,7 @@ fn forward<'a>(
             });
 
         // final matmul to get the output of the attention
-        matmul_s_f16(
+        wait(matmul_s_f16_nowait(
             mms,
             &mut s.xb2,
             &s.xb,
@@ -1042,7 +1042,7 @@ fn forward<'a>(
             Offset::at_elem(l, dim * dim),
             dim,
             dim,
-        );
+        ));
 
         // residual connection back into x
         for i in 0..dim {
@@ -1054,7 +1054,7 @@ fn forward<'a>(
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
-        matmul_s_f16(
+        matmul_s_f16_nowait(
             mms,
             &mut s.hb,
             &s.xb,
@@ -1063,7 +1063,7 @@ fn forward<'a>(
             dim,
             hidden_dim,
         );
-        matmul_s_f16(
+        wait(matmul_s_f16_nowait(
             mms,
             &mut s.hb2,
             &s.xb,
@@ -1071,7 +1071,7 @@ fn forward<'a>(
             Offset::at_elem(l, dim * hidden_dim),
             dim,
             hidden_dim,
-        );
+        ));
 
         // SwiGLU non-linearity
         for i in 0..hidden_dim {
@@ -1083,7 +1083,7 @@ fn forward<'a>(
             s.hb[i] = val;
         }
         // final matmul to get the output of the ffn
-        matmul_s_f16(
+        wait(matmul_s_f16_nowait(
             mms,
             &mut s.xb,
             &s.hb,
@@ -1091,7 +1091,7 @@ fn forward<'a>(
             Offset::at_elem(l, dim * hidden_dim),
             hidden_dim,
             dim,
-        );
+        ));
 
         // residual connection
         for i in 0..dim {
@@ -1104,7 +1104,7 @@ fn forward<'a>(
 
     // classifier into logits
     //// matmul(s->logits, x, w->wcls, p->dim, p->vocab_size);
-    matmul_s_f16(
+    wait(matmul_s_f16_nowait(
         mms,
         &mut s.logits,
         &x,
@@ -1112,7 +1112,7 @@ fn forward<'a>(
         Offset::at_elem(0, w.wcls.len()),
         p.dim,
         p.vocab_size,
-    );
+    ));
     &mut s.logits
 }
 

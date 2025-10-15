@@ -111,8 +111,7 @@ impl MetalState {
         let (mtl_buffer_w2_f16, _) = new_f16_buffer(w2);
         let (mtl_buffer_w3_f16, _) = new_f16_buffer(w3);
         let (mtl_buffer_wcls_f16, cb) = new_f16_buffer(wcls);
-        cb.waitUntilCompleted();
-        assert_eq!(cb.status(), MTLCommandBufferStatus::Completed);
+        wait(cb);
 
         MetalState {
             device,
@@ -243,8 +242,7 @@ impl MetalState {
             source,
             target,
         );
-        command_buffer.waitUntilCompleted();
-        assert_eq!(command_buffer.status(), MTLCommandBufferStatus::Completed);
+        wait(command_buffer);
     }
 
     pub fn execute_func_over_array_no_wait(
@@ -492,7 +490,7 @@ pub fn matmul_s<S: WithMetalBuf<B> + WithMetalState, B: Copy + Debug>(
         );
     }
     command_buffer.commit();
-    command_buffer.waitUntilCompleted();
+    wait(command_buffer);
 }
 
 /// Run matrix multiplication on f16 matrices.
@@ -505,7 +503,7 @@ pub fn matmul_s<S: WithMetalBuf<B> + WithMetalState, B: Copy + Debug>(
 ///
 /// # Parameters
 /// - w_sel - selector of the buffer with W weights. The weights are f16.
-pub fn matmul_s_f16<S: WithMetalBuf<B> + WithMetalState, B: Copy + Debug>(
+pub fn matmul_s_f16_nowait<S: WithMetalBuf<B> + WithMetalState, B: Copy + Debug>(
     state: &S,
     xout: &mut [f32],
     x: &[f32],
@@ -513,7 +511,7 @@ pub fn matmul_s_f16<S: WithMetalBuf<B> + WithMetalState, B: Copy + Debug>(
     w_offset: Offset,
     dim_n: usize,
     dim_d: usize,
-) {
+) -> RetainedMTLCommandBuffer {
     let dim_u = 1;
 
     assert_eq!(w_offset.end - w_offset.start, dim_n * dim_d);
@@ -620,10 +618,18 @@ pub fn matmul_s_f16<S: WithMetalBuf<B> + WithMetalState, B: Copy + Debug>(
             &mat_xout,
         );
     }
-    // TODO Do not wait for the reslt yet!
     command_buffer.commit();
+    command_buffer
+}
+
+/// Wait for the command do complete and expect success. Intentionally own and drop command_buffer
+/// because in our setup the command buffer is useless after completed.
+///
+/// See the diagram in the README to see which computations are independent and can be scheduled
+/// without waiting.
+pub fn wait(command_buffer: RetainedMTLCommandBuffer) {
     command_buffer.waitUntilCompleted();
-    // TODO do not wait for the result yet
+    assert_eq!(command_buffer.status(), MTLCommandBufferStatus::Completed);
 }
 
 trait AsNonNull {
