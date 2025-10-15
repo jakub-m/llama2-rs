@@ -575,7 +575,7 @@ impl<'a> WithMetalBuf<BufferSelector> for MatmulState<'a> {
         let ms = self.metal_state();
         match b_sel {
             BufferSelector::WqF16 => Some(&ms.mtl_buffer_wq_f16),
-            BufferSelector::Wk => Some(&ms.mtl_buffer_wk),
+            BufferSelector::WkF16 => Some(&ms.mtl_buffer_wk_f16),
             BufferSelector::Wv => Some(&ms.mtl_buffer_wv),
             BufferSelector::Wo => Some(&ms.mtl_buffer_wo),
             BufferSelector::W1 => Some(&ms.mtl_buffer_w1),
@@ -590,7 +590,7 @@ impl<'a> WithMetalBuf<BufferSelector> for MatmulState<'a> {
 #[derive(Clone, Copy, Debug)]
 enum BufferSelector {
     WqF16,
-    Wk,
+    WkF16,
     Wv,
     Wo,
     W1,
@@ -940,11 +940,11 @@ fn forward<'a>(
         ); // s.q = wq(l) @ xb
 
         // matmul(s->k, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
-        matmul_s(
+        matmul_s_f16(
             mms,
             s_k,
             &s.xb,
-            BufferSelector::Wk,
+            BufferSelector::WkF16,
             Offset::at_elem(l, dim * kv_dim),
             dim,
             kv_dim,

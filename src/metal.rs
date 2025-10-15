@@ -46,7 +46,7 @@ pub struct MetalState {
 
     // whole mtl buffer
     pub mtl_buffer_wq_f16: RetainedMTLBuffer,
-    pub mtl_buffer_wk: RetainedMTLBuffer,
+    pub mtl_buffer_wk_f16: RetainedMTLBuffer,
     pub mtl_buffer_wv: RetainedMTLBuffer,
     pub mtl_buffer_wo: RetainedMTLBuffer,
     pub mtl_buffer_w1: RetainedMTLBuffer,
@@ -93,18 +93,20 @@ impl MetalState {
             .newComputePipelineStateWithFunction_error(&convert_f16_to_f32_func)
             .unwrap();
 
-        let mtl_buffer_wq = unsafe { Self::new_shared_mtl_buffer_priv(&device, wq) };
-        let mtl_buffer_wq_f16 =
-            unsafe { Self::new_private_mtl_buffer_priv(&device, wq.len() * size_of::<F16>()) };
-        Self::execute_func_over_array_wait_priv(
-            &command_queue,
-            &func_pso_convert_f32_to_f16,
-            wq.len(),
-            &mtl_buffer_wq,
-            &mtl_buffer_wq_f16,
-        );
+        let new_f16_buffer = |source_f32: &[f32]| unsafe {
+            let (b, cb) = Self::new_private_f16_buffer_from_f32_slice_nowait(
+                &device,
+                &command_queue,
+                &func_pso_convert_f32_to_f16,
+                source_f32,
+            );
+            cb.waitUntilCompleted();
+            assert_eq!(cb.status(), MTLCommandBufferStatus::Completed);
+            (b, cb)
+        };
 
-        let mtl_buffer_wk = unsafe { Self::new_shared_mtl_buffer_priv(&device, wk) };
+        let (mtl_buffer_wq_f16, _) = new_f16_buffer(wq);
+        let (mtl_buffer_wk_f16, _) = new_f16_buffer(wk);
         let mtl_buffer_wv = unsafe { Self::new_shared_mtl_buffer_priv(&device, wv) };
         let mtl_buffer_wo = unsafe { Self::new_shared_mtl_buffer_priv(&device, wo) };
         let mtl_buffer_w1 = unsafe { Self::new_shared_mtl_buffer_priv(&device, w1) };
@@ -119,7 +121,7 @@ impl MetalState {
             func_pso_convert_f32_to_f16,
             func_pso_convert_f16_to_f32,
             mtl_buffer_wq_f16,
-            mtl_buffer_wk,
+            mtl_buffer_wk_f16,
             mtl_buffer_wv,
             mtl_buffer_wo,
             mtl_buffer_w1,
@@ -127,6 +129,26 @@ impl MetalState {
             mtl_buffer_w3,
             mtl_buffer_wcls,
         }
+    }
+
+    unsafe fn new_private_f16_buffer_from_f32_slice_nowait(
+        device: &RetainedMTLDevice,
+        command_queue: &RetainedMTLCommandQueue,
+        func_pso_convert_f32_to_f16: &RetainedMTLComputePipelineState,
+        source_f32: &[f32],
+    ) -> (RetainedMTLBuffer, RetainedMTLCommandBuffer) {
+        let mtl_buf_f32 = unsafe { Self::new_shared_mtl_buffer_priv(&device, source_f32) };
+        let mtl_buf_f16 = unsafe {
+            Self::new_private_mtl_buffer_priv(&device, source_f32.len() * size_of::<F16>())
+        };
+        let command_buffer = Self::execute_func_over_array_no_wait_priv(
+            &command_queue,
+            &func_pso_convert_f32_to_f16,
+            source_f32.len(),
+            &mtl_buf_f32,
+            &mtl_buf_f16,
+        );
+        (mtl_buf_f16, command_buffer)
     }
 
     unsafe fn new_private_mtl_buffer_from_slice(
