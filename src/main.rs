@@ -5,7 +5,7 @@ mod sliceutil;
 
 #[allow(unused_imports)]
 use llama2_rs::metal::{MetalState, matmul as metal_matmul};
-use llama2_rs::metal::{WithBufferRef, WithMetalBuf, WithMetalState, matmul_s};
+use llama2_rs::metal::{WithMetalBuf, WithMetalState, matmul_s, matmul_s_f16};
 #[allow(unused_imports)]
 use logging::*;
 #[allow(unused_imports)]
@@ -574,7 +574,7 @@ impl<'a> WithMetalBuf<BufferSelector> for MatmulState<'a> {
     ) -> Option<&Retained<ProtocolObject<dyn MTLBuffer>>> {
         let ms = self.metal_state();
         match b_sel {
-            BufferSelector::Wq => Some(&ms.mtl_buffer_wq),
+            BufferSelector::WqF16 => Some(&ms.mtl_buffer_wq_f16),
             BufferSelector::Wk => Some(&ms.mtl_buffer_wk),
             BufferSelector::Wv => Some(&ms.mtl_buffer_wv),
             BufferSelector::Wo => Some(&ms.mtl_buffer_wo),
@@ -589,7 +589,7 @@ impl<'a> WithMetalBuf<BufferSelector> for MatmulState<'a> {
 /// Select particular buffer.
 #[derive(Clone, Copy, Debug)]
 enum BufferSelector {
-    Wq,
+    WqF16,
     Wk,
     Wv,
     Wo,
@@ -597,21 +597,6 @@ enum BufferSelector {
     W2,
     W3,
     Wcls,
-}
-
-impl<'a> WithBufferRef<BufferSelector> for MatmulState<'a> {
-    fn buffer_ref(&self, b_sel: BufferSelector) -> &[f32] {
-        match b_sel {
-            BufferSelector::Wq => self.weights.wq,
-            BufferSelector::Wk => self.weights.wk,
-            BufferSelector::Wv => self.weights.wv,
-            BufferSelector::Wo => self.weights.wo,
-            BufferSelector::W1 => self.weights.w1,
-            BufferSelector::W2 => self.weights.w2,
-            BufferSelector::W3 => self.weights.w3,
-            BufferSelector::Wcls => self.weights.wcls,
-        }
-    }
 }
 
 /// Utility that returns a subslice and at the same time moves the slice. n is the size of the
@@ -944,11 +929,11 @@ fn forward<'a>(
         let s_v = s.value_cache.slice_at_mut(loff + pos * kv_dim, kv_dim);
 
         // qkv matmuls for this position
-        matmul_s(
+        matmul_s_f16(
             mms,
             &mut s.q,
             &s.xb,
-            BufferSelector::Wq,
+            BufferSelector::WqF16,
             Offset::at_elem(l, dim * dim),
             dim,
             dim,

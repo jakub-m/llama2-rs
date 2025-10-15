@@ -1,4 +1,4 @@
-use crate::sliceutil::Offset;
+use crate::{metal, sliceutil::Offset};
 use objc2::AnyThread;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
@@ -14,7 +14,6 @@ use objc2_metal_performance_shaders::{
 use std::{ffi::c_void, fmt::Debug, ptr::NonNull};
 
 const CONVERT_F16_SOURCE: &str = include_str!("./convert_f16.metal");
-const SIZE_OF_F16: usize = size_of::<f32>() / 2;
 
 type RetainedMTLBuffer = Retained<ProtocolObject<dyn MTLBuffer>>;
 type RetainedMTLCommandBuffer = Retained<ProtocolObject<dyn MTLCommandBuffer>>;
@@ -23,6 +22,17 @@ type RetainedMTLComputePipelineState = Retained<ProtocolObject<dyn MTLComputePip
 type RetainedMTLDevice = Retained<ProtocolObject<dyn MTLDevice>>;
 type RetainedMTLFunction = Retained<ProtocolObject<dyn MTLFunction>>;
 type RetainedMTLLibrary = Retained<ProtocolObject<dyn MTLLibrary>>;
+
+/// A placeholder for f16 that I can use around the code here. I don't handle f16 in Rust anyway,
+/// it's only to allocate proper buffer sizes for GPU.
+#[derive(Clone)]
+struct F16(u16);
+
+impl Default for F16 {
+    fn default() -> Self {
+        Self(0)
+    }
+}
 
 pub struct MetalState {
     device: RetainedMTLDevice,
@@ -35,8 +45,7 @@ pub struct MetalState {
     func_pso_convert_f16_to_f32: RetainedMTLComputePipelineState,
 
     // whole mtl buffer
-    //pub mtl_buffer_wq_f16: RetainedMTLBuffer, // TODO
-    pub mtl_buffer_wq: RetainedMTLBuffer,
+    pub mtl_buffer_wq_f16: RetainedMTLBuffer,
     pub mtl_buffer_wk: RetainedMTLBuffer,
     pub mtl_buffer_wv: RetainedMTLBuffer,
     pub mtl_buffer_wo: RetainedMTLBuffer,
@@ -84,11 +93,10 @@ impl MetalState {
             .newComputePipelineStateWithFunction_error(&convert_f16_to_f32_func)
             .unwrap();
 
-        // TODO  remove those buffers once halves are initialized.
-        let mtl_buffer_wq = unsafe { Self::new_shared_mtl_buffer(&device, wq) };
+        let mtl_buffer_wq = unsafe { Self::new_shared_mtl_buffer_priv(&device, wq) };
         let mtl_buffer_wq_f16 =
-            unsafe { Self::new_private_mtl_buffer(&device, wq.len() * SIZE_OF_F16) };
-        Self::execute_func_over_array_wait(
+            unsafe { Self::new_private_mtl_buffer_priv(&device, wq.len() * size_of::<F16>()) };
+        Self::execute_func_over_array_wait_priv(
             &command_queue,
             &func_pso_convert_f32_to_f16,
             wq.len(),
@@ -96,13 +104,13 @@ impl MetalState {
             &mtl_buffer_wq_f16,
         );
 
-        let mtl_buffer_wk = unsafe { Self::new_shared_mtl_buffer(&device, wk) };
-        let mtl_buffer_wv = unsafe { Self::new_shared_mtl_buffer(&device, wv) };
-        let mtl_buffer_wo = unsafe { Self::new_shared_mtl_buffer(&device, wo) };
-        let mtl_buffer_w1 = unsafe { Self::new_shared_mtl_buffer(&device, w1) };
-        let mtl_buffer_w2 = unsafe { Self::new_shared_mtl_buffer(&device, w2) };
-        let mtl_buffer_w3 = unsafe { Self::new_shared_mtl_buffer(&device, w3) };
-        let mtl_buffer_wcls = unsafe { Self::new_shared_mtl_buffer(&device, wcls) };
+        let mtl_buffer_wk = unsafe { Self::new_shared_mtl_buffer_priv(&device, wk) };
+        let mtl_buffer_wv = unsafe { Self::new_shared_mtl_buffer_priv(&device, wv) };
+        let mtl_buffer_wo = unsafe { Self::new_shared_mtl_buffer_priv(&device, wo) };
+        let mtl_buffer_w1 = unsafe { Self::new_shared_mtl_buffer_priv(&device, w1) };
+        let mtl_buffer_w2 = unsafe { Self::new_shared_mtl_buffer_priv(&device, w2) };
+        let mtl_buffer_w3 = unsafe { Self::new_shared_mtl_buffer_priv(&device, w3) };
+        let mtl_buffer_wcls = unsafe { Self::new_shared_mtl_buffer_priv(&device, wcls) };
 
         MetalState {
             device,
@@ -110,7 +118,7 @@ impl MetalState {
             library,
             func_pso_convert_f32_to_f16,
             func_pso_convert_f16_to_f32,
-            mtl_buffer_wq,
+            mtl_buffer_wq_f16,
             mtl_buffer_wk,
             mtl_buffer_wv,
             mtl_buffer_wo,
@@ -126,7 +134,7 @@ impl MetalState {
         command_queue: &RetainedMTLCommandQueue,
         buf: &[f32],
     ) -> RetainedMTLBuffer {
-        let shared_buf = unsafe { Self::new_shared_mtl_buffer(&device, buf) };
+        let shared_buf = unsafe { Self::new_shared_mtl_buffer_priv(&device, buf) };
         let buf_size = buf.len() * size_of::<f32>();
         let private_buf = device
             .newBufferWithLength_options(buf_size, MTLResourceOptions::StorageModePrivate)
@@ -149,7 +157,11 @@ impl MetalState {
         private_buf
     }
 
-    unsafe fn new_private_mtl_buffer(
+    pub unsafe fn new_private_mtl_buffer(&self, buf_size_bytes: usize) -> RetainedMTLBuffer {
+        unsafe { Self::new_private_mtl_buffer_priv(&self.device, buf_size_bytes) }
+    }
+
+    unsafe fn new_private_mtl_buffer_priv(
         device: &RetainedMTLDevice,
         buf_size_bytes: usize,
     ) -> RetainedMTLBuffer {
@@ -158,7 +170,14 @@ impl MetalState {
             .unwrap()
     }
 
-    unsafe fn new_shared_mtl_buffer(device: &RetainedMTLDevice, buf: &[f32]) -> RetainedMTLBuffer {
+    unsafe fn new_shared_mtl_buffer(&self, buf: &[f32]) -> RetainedMTLBuffer {
+        Self::new_shared_mtl_buffer_priv(&self.device, buf)
+    }
+
+    unsafe fn new_shared_mtl_buffer_priv(
+        device: &RetainedMTLDevice,
+        buf: &[f32],
+    ) -> RetainedMTLBuffer {
         unsafe {
             device
                 .newBufferWithBytesNoCopy_length_options_deallocator(
@@ -171,16 +190,32 @@ impl MetalState {
         }
     }
 
+    fn execute_func_over_array_wait(
+        &self,
+        convert_func: &RetainedMTLComputePipelineState,
+        n_elem: usize,
+        source: &RetainedMTLBuffer,
+        target: &RetainedMTLBuffer,
+    ) {
+        Self::execute_func_over_array_wait_priv(
+            &self.command_queue,
+            convert_func,
+            n_elem,
+            source,
+            target,
+        );
+    }
+
     // TODO waitUntilCompleted after all the passes are done
     /// Execute the function over 1d array, and wait for the result.
-    fn execute_func_over_array_wait(
+    fn execute_func_over_array_wait_priv(
         command_queue: &RetainedMTLCommandQueue,
         convert_func: &RetainedMTLComputePipelineState,
         n_elem: usize,
         source: &RetainedMTLBuffer,
         target: &RetainedMTLBuffer,
     ) {
-        let command_buffer = Self::execute_func_over_array_no_wait(
+        let command_buffer = Self::execute_func_over_array_no_wait_priv(
             command_queue,
             convert_func,
             n_elem,
@@ -191,8 +226,24 @@ impl MetalState {
         assert_eq!(command_buffer.status(), MTLCommandBufferStatus::Completed);
     }
 
+    pub fn execute_func_over_array_no_wait(
+        &self,
+        convert_func: &RetainedMTLComputePipelineState,
+        n_elem: usize,
+        source: &RetainedMTLBuffer,
+        target: &RetainedMTLBuffer,
+    ) -> RetainedMTLCommandBuffer {
+        Self::execute_func_over_array_no_wait_priv(
+            &self.command_queue,
+            convert_func,
+            n_elem,
+            source,
+            target,
+        )
+    }
+
     /// Commit the function over 1d array, but do not wait for the result.
-    fn execute_func_over_array_no_wait(
+    fn execute_func_over_array_no_wait_priv(
         command_queue: &RetainedMTLCommandQueue,
         convert_func: &RetainedMTLComputePipelineState,
         n_elem: usize,
@@ -288,7 +339,7 @@ pub trait WithMetalState {
 /// State is the state that is needed for efficient operation. This includes: Metal state, shared weight
 /// buffer state. Buffer indicates which buffer (from the state) is used for multiplication.
 /// `w_sel` - selects the buffer from the state.
-pub fn matmul_s<S: WithBufferRef<B> + WithMetalBuf<B> + WithMetalState, B: Copy + Debug>(
+pub fn matmul_s<S: WithMetalBuf<B> + WithMetalState, B: Copy + Debug>(
     state: &S,
     xout: &mut [f32],
     x: &[f32],
@@ -298,8 +349,6 @@ pub fn matmul_s<S: WithBufferRef<B> + WithMetalBuf<B> + WithMetalState, B: Copy 
     dim_d: usize,
 ) {
     let dim_u = 1;
-
-    let w_ref_full: &[f32] = state.buffer_ref(w_sel);
 
     // Declare shared buffers. The memory is already allocaded in the main code, here we say to
     // share the allocated memory with GPU.
@@ -425,17 +474,148 @@ pub fn matmul_s<S: WithBufferRef<B> + WithMetalBuf<B> + WithMetalState, B: Copy 
     command_buffer.waitUntilCompleted();
 }
 
-//struct MatmulState<'a> {
-//    // The weights in memory (mmaped possibly) for multiplications. Those weights might be copied
-//    // to GPU-private memory.
-//    w: TransformerWeights<'a>,
-//}
+/// Run matrix multiplication on f16 matrices.
+///
+/// Internally, during matrix multiplication, W matrix, X and XOUT vectors are f16.  W should be
+/// already transformed to f16 in advance, but x and xout are transformed on the fly here. Those
+/// buffers are relatively small, and it does not seem that allocating those buffers is that much
+/// overhead (although, it is definitely, and it would be an optimization opportunity to reuse
+/// those interim buffers).
+///
+/// # Parameters
+/// - w_sel - selector of the buffer with W weights. The weights are f16.
+pub fn matmul_s_f16<S: WithMetalBuf<B> + WithMetalState, B: Copy + Debug>(
+    state: &S,
+    xout: &mut [f32],
+    x: &[f32],
+    w_sel: B,
+    w_offset: Offset,
+    dim_n: usize,
+    dim_d: usize,
+) {
+    let dim_u = 1;
 
-///// One of the predefined buffers with weights. The buffer values correspond to particular buffers
-///// in [TransformerWeights].
-//enum MatmulBuffer {
-//    Wq,
-//}
+    assert_eq!(w_offset.end - w_offset.start, dim_n * dim_d);
+    let metal_state = state.metal_state();
+    let buf_w = state.metal_buffer(w_sel).unwrap();
+
+    // Now describe the input buffers as matrices of appropriate dimensions.
+    // W matrix is an array of values with rows packed one after another (no padding etc).
+    let mat_w = unsafe {
+        let mat = MPSMatrix::alloc();
+        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
+            dim_d as NSUInteger,
+            dim_n as NSUInteger,
+            dim_n * size_of::<F16>() as NSUInteger, // stride
+            MPSDataType::Float16,
+        );
+
+        MPSMatrix::initWithBuffer_offset_descriptor(
+            mat,
+            &buf_w,
+            w_offset.start * size_of::<F16>(),
+            &desc,
+        )
+    };
+
+    // Now for the x f32 buffer, we need to convert the buffer to f16.
+    assert_eq!(
+        x.len(),
+        dim_n,
+        "x.len() ({x_len}) != dim_n ({dim_n})",
+        x_len = x.len()
+    );
+
+    let buf_x_f32 = unsafe { metal_state.new_shared_mtl_buffer(&x) };
+    // This is an interim f16 x buffer. The optimization opportunity is to not allocate this buffer
+    // in each matmul, but reuse.
+    let buf_x_f16 = unsafe { metal_state.new_private_mtl_buffer(x.len() * size_of::<F16>()) };
+    // TODO Do not wait for the result yet here.
+    metal_state.execute_func_over_array_wait(
+        &metal_state.func_pso_convert_f32_to_f16,
+        x.len(),
+        &buf_x_f32,
+        &buf_x_f16,
+    );
+
+    // Now do the same with the output buffer.
+    // TODO: Do not allocate output, but write to xout, and then pass over xout and convert f16 to
+    // f32 in place. Mind the stride!
+    assert_eq!(
+        xout.len(),
+        dim_d,
+        "xout.len() ({xout_len}) != dim_d ({dim_d})",
+        xout_len = xout.len()
+    );
+    let buf_xout_f32 = unsafe { metal_state.new_shared_mtl_buffer(&xout) };
+    let buf_xout_f16 = unsafe { metal_state.new_private_mtl_buffer(xout.len() * size_of::<F16>()) };
+
+    // Now define the matrices.
+    // X matrics (vector) is just a flat array.
+    let mat_x = unsafe {
+        let mat = MPSMatrix::alloc();
+        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
+            dim_n as NSUInteger,
+            dim_u as NSUInteger,
+            dim_u * size_of::<F16>() as NSUInteger,
+            MPSDataType::Float16,
+        );
+
+        MPSMatrix::initWithBuffer_descriptor(mat, &buf_x_f16, &desc)
+    };
+
+    // The output matrix (vector) is just a flat array.
+    let mat_xout = unsafe {
+        let mat = MPSMatrix::alloc();
+        let desc = MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
+            dim_d as NSUInteger,
+            dim_u as NSUInteger,
+            dim_u * size_of::<F16>() as NSUInteger,
+            MPSDataType::Float16,
+        );
+
+        MPSMatrix::initWithBuffer_descriptor(mat, &buf_xout_f16, &desc)
+    };
+
+    let command_buffer = metal_state.command_queue.commandBuffer().unwrap();
+    let matmul = unsafe {
+        let matmul_alloc = MPSMatrixMultiplication::alloc();
+        MPSMatrixMultiplication::initWithDevice_transposeLeft_transposeRight_resultRows_resultColumns_interiorColumns_alpha_beta(
+                    matmul_alloc,
+                    &metal_state.device,
+                    false,
+                    false,
+                    dim_d, // result_col
+                    dim_u, // result_row
+                    dim_n, // interior_col
+                    1.0,
+                    0.0,
+                )
+    };
+
+    unsafe {
+        matmul.encodeToCommandBuffer_leftMatrix_rightMatrix_resultMatrix(
+            &command_buffer,
+            &mat_w,
+            &mat_x,
+            &mat_xout,
+        );
+    }
+    // TODO Do not wait for the reslt yet!
+    command_buffer.commit();
+    command_buffer.waitUntilCompleted();
+
+    // Now convert f16 to f32 into the shared buffer.
+    // TODO do not wait for the result yet
+    metal_state.execute_func_over_array_wait(
+        &metal_state.func_pso_convert_f16_to_f32,
+        x.len(),
+        &buf_xout_f16,
+        &buf_xout_f32,
+    );
+
+    // TODO convert f16 to f32 after matmul.
+}
 
 trait AsNonNull {
     fn as_c_void(&self) -> NonNull<c_void>;
