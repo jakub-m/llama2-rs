@@ -5,7 +5,7 @@ mod sliceutil;
 
 #[allow(unused_imports)]
 use llama2_rs::metal::{MetalState, matmul as metal_matmul};
-use llama2_rs::metal::{WithMetalBuf, WithMetalState, matmul_s, matmul_s_f16};
+use llama2_rs::metal::{WithMetalBuf, WithMetalState, matmul_s_f16};
 #[allow(unused_imports)]
 use logging::*;
 #[allow(unused_imports)]
@@ -1114,31 +1114,6 @@ fn forward<'a>(
         p.vocab_size,
     );
     &mut s.logits
-}
-
-//pub fn matmul(
-//    metal_state: &MetalState,
-//    xout: &mut [f32],
-//    x: &[f32],
-//    w: &[f32],
-//    dim_n: usize,
-//    dim_d: usize,
-//) {
-//    // metal_matmul(metal_state, xout, x, w, dim_n, dim_d);
-//    cpu_matmul(xout, x, w, dim_n, dim_d);
-//}
-
-pub fn matmul_offset(
-    metal_state: &MetalState,
-    xout: &mut [f32],
-    x: &[f32],
-    w_full: &[f32],
-    w_offset: Offset,
-    dim_n: usize,
-    dim_d: usize,
-) {
-    // TODO remove this one
-    cpu_matmul(xout, x, w_full.slice_from_offset(w_offset), dim_n, dim_d);
 }
 
 fn rmsnorm(o: &mut [f32], x: &[f32], weight: &[f32], size: usize) {

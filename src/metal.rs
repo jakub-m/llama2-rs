@@ -100,8 +100,6 @@ impl MetalState {
                 &func_pso_convert_f32_to_f16,
                 source_f32,
             );
-            cb.waitUntilCompleted();
-            assert_eq!(cb.status(), MTLCommandBufferStatus::Completed);
             (b, cb)
         };
 
@@ -112,7 +110,9 @@ impl MetalState {
         let (mtl_buffer_wo_f16, _) = new_f16_buffer(wo);
         let (mtl_buffer_w2_f16, _) = new_f16_buffer(w2);
         let (mtl_buffer_w3_f16, _) = new_f16_buffer(w3);
-        let (mtl_buffer_wcls_f16, _) = new_f16_buffer(wcls);
+        let (mtl_buffer_wcls_f16, cb) = new_f16_buffer(wcls);
+        cb.waitUntilCompleted();
+        assert_eq!(cb.status(), MTLCommandBufferStatus::Completed);
 
         MetalState {
             device,
@@ -228,7 +228,6 @@ impl MetalState {
         );
     }
 
-    // TODO waitUntilCompleted after all the passes are done
     /// Execute the function over 1d array, and wait for the result.
     fn execute_func_over_array_wait_priv(
         command_queue: &RetainedMTLCommandQueue,
@@ -552,8 +551,7 @@ pub fn matmul_s_f16<S: WithMetalBuf<B> + WithMetalState, B: Copy + Debug>(
     // This is an interim f16 x buffer. The optimization opportunity is to not allocate this buffer
     // in each matmul, but reuse.
     let buf_x_f16 = unsafe { metal_state.new_private_mtl_buffer(x.len() * size_of::<F16>()) };
-    // TODO Do not wait for the result yet here.
-    metal_state.execute_func_over_array_wait(
+    metal_state.execute_func_over_array_no_wait(
         &metal_state.func_pso_convert_f32_to_f16,
         x.len(),
         &buf_x_f32,
@@ -626,8 +624,6 @@ pub fn matmul_s_f16<S: WithMetalBuf<B> + WithMetalState, B: Copy + Debug>(
     command_buffer.commit();
     command_buffer.waitUntilCompleted();
     // TODO do not wait for the result yet
-    // TODO Now convert f16 to f32 into the shared buffer.
-    // TODO convert f16 to f32 after matmul.
 }
 
 trait AsNonNull {
