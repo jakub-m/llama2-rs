@@ -39,19 +39,9 @@ Metal:
   memory buffers. Maybe it's because of specific access patterns of the
   program.
 
-
-Other:
-
-- ChatGPT was _very useful_ in learning `lldb` commands.
-
-- [mermaid](https://mermaid.live) is an absolutely fantastic tool for diagrams.
-
-- Monitor if you memory does not start to swap , with `sysctl vm.swapusage` or
-  -Activity Monitor. Your computation will instantly become dog slow.
+float16:
 
 - 65520 is already an infinity in `f16`.
-
-- Using `f16` for some matrices, works, for other totally corrupts the output.
 
 - Apple M2 Metal does not support matrix multiplication on BFloat16:
 
@@ -61,6 +51,20 @@ of MPSDataTypeFloat32, MPSDataTypeFloat16, MPSDataTypeInt8, or
 MPSDataTypeInt16.'
 ```
 
+- When doing matmul on f16, you need the output to be f32, otherwise the output
+  will corrupt. Fortunately, Metal supports matmul for different types at input
+  and output.
+
+- Using f16 was _slower_ for tinystories than f32.
+
+Other:
+
+- ChatGPT was _very useful_ in learning `lldb` commands.
+
+- [mermaid](https://mermaid.live) is an absolutely fantastic tool for diagrams.
+
+- Monitor if you memory does not start to swap , with `sysctl vm.swapusage` or
+  -Activity Monitor. Your computation will instantly become dog slow.
 
 [par_iter]: https://docs.rs/rayon/latest/rayon/iter/index.html
 
