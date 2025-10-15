@@ -50,9 +50,9 @@ pub struct MetalState {
     pub mtl_buffer_wv_f16: RetainedMTLBuffer,
     pub mtl_buffer_w1_f16: RetainedMTLBuffer,
     pub mtl_buffer_wo_f16: RetainedMTLBuffer,
-    pub mtl_buffer_w2: RetainedMTLBuffer,
-    pub mtl_buffer_w3: RetainedMTLBuffer,
-    pub mtl_buffer_wcls: RetainedMTLBuffer,
+    pub mtl_buffer_w2_f16: RetainedMTLBuffer,
+    pub mtl_buffer_w3_f16: RetainedMTLBuffer,
+    pub mtl_buffer_wcls_f16: RetainedMTLBuffer,
 }
 
 impl MetalState {
@@ -110,9 +110,9 @@ impl MetalState {
         let (mtl_buffer_wv_f16, _) = new_f16_buffer(wv);
         let (mtl_buffer_w1_f16, _) = new_f16_buffer(w1);
         let (mtl_buffer_wo_f16, _) = new_f16_buffer(wo);
-        let mtl_buffer_w2 = unsafe { Self::new_shared_mtl_buffer_priv(&device, w2) };
-        let mtl_buffer_w3 = unsafe { Self::new_shared_mtl_buffer_priv(&device, w3) };
-        let mtl_buffer_wcls = unsafe { Self::new_shared_mtl_buffer_priv(&device, wcls) };
+        let (mtl_buffer_w2_f16, _) = new_f16_buffer(w2);
+        let (mtl_buffer_w3_f16, _) = new_f16_buffer(w3);
+        let (mtl_buffer_wcls_f16, _) = new_f16_buffer(wcls);
 
         MetalState {
             device,
@@ -125,9 +125,9 @@ impl MetalState {
             mtl_buffer_wv_f16,
             mtl_buffer_w1_f16,
             mtl_buffer_wo_f16,
-            mtl_buffer_w2,
-            mtl_buffer_w3,
-            mtl_buffer_wcls,
+            mtl_buffer_w2_f16,
+            mtl_buffer_w3_f16,
+            mtl_buffer_wcls_f16,
         }
     }
 

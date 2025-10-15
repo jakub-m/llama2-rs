@@ -579,9 +579,9 @@ impl<'a> WithMetalBuf<BufferSelector> for MatmulState<'a> {
             BufferSelector::WvF16 => Some(&ms.mtl_buffer_wv_f16),
             BufferSelector::W1F16 => Some(&ms.mtl_buffer_w1_f16),
             BufferSelector::WoF16 => Some(&ms.mtl_buffer_wo_f16),
-            BufferSelector::W2 => Some(&ms.mtl_buffer_w2),
-            BufferSelector::W3 => Some(&ms.mtl_buffer_w3),
-            BufferSelector::Wcls => Some(&ms.mtl_buffer_wcls),
+            BufferSelector::W2F16 => Some(&ms.mtl_buffer_w2_f16),
+            BufferSelector::W3F16 => Some(&ms.mtl_buffer_w3_f16),
+            BufferSelector::WclsF16 => Some(&ms.mtl_buffer_wcls_f16),
         }
     }
 }
@@ -594,9 +594,9 @@ enum BufferSelector {
     WvF16,
     W1F16,
     WoF16,
-    W2,
-    W3,
-    Wcls,
+    W2F16,
+    W3F16,
+    WclsF16,
 }
 
 /// Utility that returns a subslice and at the same time moves the slice. n is the size of the
@@ -1063,11 +1063,11 @@ fn forward<'a>(
             dim,
             hidden_dim,
         );
-        matmul_s(
+        matmul_s_f16(
             mms,
             &mut s.hb2,
             &s.xb,
-            BufferSelector::W3,
+            BufferSelector::W3F16,
             Offset::at_elem(l, dim * hidden_dim),
             dim,
             hidden_dim,
@@ -1083,11 +1083,11 @@ fn forward<'a>(
             s.hb[i] = val;
         }
         // final matmul to get the output of the ffn
-        matmul_s(
+        matmul_s_f16(
             mms,
             &mut s.xb,
             &s.hb,
-            BufferSelector::W2,
+            BufferSelector::W2F16,
             Offset::at_elem(l, dim * hidden_dim),
             hidden_dim,
             dim,
@@ -1104,11 +1104,11 @@ fn forward<'a>(
 
     // classifier into logits
     //// matmul(s->logits, x, w->wcls, p->dim, p->vocab_size);
-    matmul_s(
+    matmul_s_f16(
         mms,
         &mut s.logits,
         &x,
-        BufferSelector::Wcls,
+        BufferSelector::WclsF16,
         Offset::at_elem(0, w.wcls.len()),
         p.dim,
         p.vocab_size,
