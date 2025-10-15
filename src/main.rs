@@ -577,8 +577,8 @@ impl<'a> WithMetalBuf<BufferSelector> for MatmulState<'a> {
             BufferSelector::WqF16 => Some(&ms.mtl_buffer_wq_f16),
             BufferSelector::WkF16 => Some(&ms.mtl_buffer_wk_f16),
             BufferSelector::WvF16 => Some(&ms.mtl_buffer_wv_f16),
-            BufferSelector::Wo => Some(&ms.mtl_buffer_wo),
             BufferSelector::W1 => Some(&ms.mtl_buffer_w1),
+            BufferSelector::WoF16 => Some(&ms.mtl_buffer_wo_f16),
             BufferSelector::W2 => Some(&ms.mtl_buffer_w2),
             BufferSelector::W3 => Some(&ms.mtl_buffer_w3),
             BufferSelector::Wcls => Some(&ms.mtl_buffer_wcls),
@@ -592,8 +592,8 @@ enum BufferSelector {
     WqF16,
     WkF16,
     WvF16,
-    Wo,
     W1,
+    WoF16,
     W2,
     W3,
     Wcls,
@@ -1034,11 +1034,11 @@ fn forward<'a>(
             });
 
         // final matmul to get the output of the attention
-        matmul_s(
+        matmul_s_f16(
             mms,
             &mut s.xb2,
             &s.xb,
-            BufferSelector::Wo,
+            BufferSelector::WoF16,
             Offset::at_elem(l, dim * dim),
             dim,
             dim,
