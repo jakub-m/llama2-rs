@@ -2,31 +2,41 @@ use crate::sliceutil::Offset;
 use objc2::AnyThread;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
-use objc2_foundation::NSUInteger;
+use objc2_foundation::{NSUInteger, ns_string};
 use objc2_metal::{
-    MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLComputePipelineState, MTLCreateSystemDefaultDevice, MTLDevice, MTLFunction,
-    MTLResourceOptions,
+    MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder,
+    MTLCommandQueue, MTLComputeCommandEncoder, MTLComputePipelineState,
+    MTLCreateSystemDefaultDevice, MTLDevice, MTLFunction, MTLLibrary, MTLResourceOptions, MTLSize,
 };
 use objc2_metal_performance_shaders::{
     MPSDataType, MPSMatrix, MPSMatrixDescriptor, MPSMatrixMultiplication,
 };
 use std::{ffi::c_void, fmt::Debug, ptr::NonNull};
 
+const CONVERT_F16_SOURCE: &str = include_str!("./convert_f16.metal");
 const SIZE_OF_F16: usize = size_of::<f32>() / 2;
 
 type RetainedMTLBuffer = Retained<ProtocolObject<dyn MTLBuffer>>;
+type RetainedMTLCommandBuffer = Retained<ProtocolObject<dyn MTLCommandBuffer>>;
 type RetainedMTLCommandQueue = Retained<ProtocolObject<dyn MTLCommandQueue>>;
+type RetainedMTLComputePipelineState = Retained<ProtocolObject<dyn MTLComputePipelineState>>;
 type RetainedMTLDevice = Retained<ProtocolObject<dyn MTLDevice>>;
 type RetainedMTLFunction = Retained<ProtocolObject<dyn MTLFunction>>;
-type RetainedMTLComputePipelineState = Retained<ProtocolObject<dyn MTLComputePipelineState>>;
+type RetainedMTLLibrary = Retained<ProtocolObject<dyn MTLLibrary>>;
 
 pub struct MetalState {
     device: RetainedMTLDevice,
     command_queue: RetainedMTLCommandQueue,
+    /// Library with the compiled functions.
+    library: RetainedMTLLibrary,
+    /// A function witin the library.
+    func_pso_convert_f32_to_f16: RetainedMTLComputePipelineState,
+    /// A function witin the library.
+    func_pso_convert_f16_to_f32: RetainedMTLComputePipelineState,
+
     // whole mtl buffer
+    //pub mtl_buffer_wq_f16: RetainedMTLBuffer, // TODO
     pub mtl_buffer_wq: RetainedMTLBuffer,
-    //pub mtl_buffer_wq_f16: RetainedMTLBuffer,
     pub mtl_buffer_wk: RetainedMTLBuffer,
     pub mtl_buffer_wv: RetainedMTLBuffer,
     pub mtl_buffer_wo: RetainedMTLBuffer,
@@ -34,11 +44,6 @@ pub struct MetalState {
     pub mtl_buffer_w2: RetainedMTLBuffer,
     pub mtl_buffer_w3: RetainedMTLBuffer,
     pub mtl_buffer_wcls: RetainedMTLBuffer,
-}
-
-pub enum BufferType {
-    Shared,
-    Private,
 }
 
 impl MetalState {
@@ -51,56 +56,60 @@ impl MetalState {
         w2: &[f32],
         w3: &[f32],
         wcls: &[f32],
-        buffer_type: BufferType,
     ) -> Self {
         let device: RetainedMTLDevice = MTLCreateSystemDefaultDevice().unwrap();
         let command_queue = device.newCommandQueue().unwrap();
 
-        let mtl_buffer_wq;
-        let mtl_buffer_wk;
-        let mtl_buffer_wv;
-        let mtl_buffer_wo;
-        let mtl_buffer_w1;
-        let mtl_buffer_w2;
-        let mtl_buffer_w3;
-        let mtl_buffer_wcls;
+        let convert_f16_source = ns_string!(CONVERT_F16_SOURCE);
+        let library = device
+            .newLibraryWithSource_options_error(
+                convert_f16_source,
+                None, /*compilation options*/
+            )
+            .unwrap();
 
-        match buffer_type {
-            BufferType::Shared => {
-                mtl_buffer_wq = unsafe { Self::new_shared_mtl_buffer(&device, wq) };
-                mtl_buffer_wk = unsafe { Self::new_shared_mtl_buffer(&device, wk) };
-                mtl_buffer_wv = unsafe { Self::new_shared_mtl_buffer(&device, wv) };
-                mtl_buffer_wo = unsafe { Self::new_shared_mtl_buffer(&device, wo) };
-                mtl_buffer_w1 = unsafe { Self::new_shared_mtl_buffer(&device, w1) };
-                mtl_buffer_w2 = unsafe { Self::new_shared_mtl_buffer(&device, w2) };
-                mtl_buffer_w3 = unsafe { Self::new_shared_mtl_buffer(&device, w3) };
-                mtl_buffer_wcls = unsafe { Self::new_shared_mtl_buffer(&device, wcls) };
-            }
-            BufferType::Private => {
-                mtl_buffer_wq =
-                    unsafe { Self::new_private_mtl_buffer_from_slice(&device, &command_queue, wq) };
+        let convert_f32_to_f16_func = library
+            .newFunctionWithName(ns_string!("convert_f32_to_f16"))
+            .unwrap();
 
-                mtl_buffer_wk =
-                    unsafe { Self::new_private_mtl_buffer_from_slice(&device, &command_queue, wk) };
-                mtl_buffer_wv =
-                    unsafe { Self::new_private_mtl_buffer_from_slice(&device, &command_queue, wv) };
-                mtl_buffer_wo =
-                    unsafe { Self::new_private_mtl_buffer_from_slice(&device, &command_queue, wo) };
-                mtl_buffer_w1 =
-                    unsafe { Self::new_private_mtl_buffer_from_slice(&device, &command_queue, w1) };
-                mtl_buffer_w2 =
-                    unsafe { Self::new_private_mtl_buffer_from_slice(&device, &command_queue, w2) };
-                mtl_buffer_w3 =
-                    unsafe { Self::new_private_mtl_buffer_from_slice(&device, &command_queue, w3) };
-                mtl_buffer_wcls = unsafe {
-                    Self::new_private_mtl_buffer_from_slice(&device, &command_queue, wcls)
-                };
-            }
-        }
+        let convert_f16_to_f32_func = library
+            .newFunctionWithName(ns_string!("convert_f16_to_f32"))
+            .unwrap();
+
+        let func_pso_convert_f32_to_f16 = device
+            .newComputePipelineStateWithFunction_error(&convert_f32_to_f16_func)
+            .unwrap();
+
+        let func_pso_convert_f16_to_f32 = device
+            .newComputePipelineStateWithFunction_error(&convert_f16_to_f32_func)
+            .unwrap();
+
+        // TODO  remove those buffers once halves are initialized.
+        let mtl_buffer_wq = unsafe { Self::new_shared_mtl_buffer(&device, wq) };
+        let mtl_buffer_wq_f16 =
+            unsafe { Self::new_private_mtl_buffer(&device, wq.len() * SIZE_OF_F16) };
+        Self::execute_func_over_array_wait(
+            &command_queue,
+            &func_pso_convert_f32_to_f16,
+            wq.len(),
+            &mtl_buffer_wq,
+            &mtl_buffer_wq_f16,
+        );
+
+        let mtl_buffer_wk = unsafe { Self::new_shared_mtl_buffer(&device, wk) };
+        let mtl_buffer_wv = unsafe { Self::new_shared_mtl_buffer(&device, wv) };
+        let mtl_buffer_wo = unsafe { Self::new_shared_mtl_buffer(&device, wo) };
+        let mtl_buffer_w1 = unsafe { Self::new_shared_mtl_buffer(&device, w1) };
+        let mtl_buffer_w2 = unsafe { Self::new_shared_mtl_buffer(&device, w2) };
+        let mtl_buffer_w3 = unsafe { Self::new_shared_mtl_buffer(&device, w3) };
+        let mtl_buffer_wcls = unsafe { Self::new_shared_mtl_buffer(&device, wcls) };
 
         MetalState {
             device,
             command_queue,
+            library,
+            func_pso_convert_f32_to_f16,
+            func_pso_convert_f16_to_f32,
             mtl_buffer_wq,
             mtl_buffer_wk,
             mtl_buffer_wv,
@@ -160,6 +169,76 @@ impl MetalState {
                 )
                 .unwrap()
         }
+    }
+
+    // TODO waitUntilCompleted after all the passes are done
+    /// Execute the function over 1d array, and wait for the result.
+    fn execute_func_over_array_wait(
+        command_queue: &RetainedMTLCommandQueue,
+        convert_func: &RetainedMTLComputePipelineState,
+        n_elem: usize,
+        source: &RetainedMTLBuffer,
+        target: &RetainedMTLBuffer,
+    ) {
+        let command_buffer = Self::execute_func_over_array_no_wait(
+            command_queue,
+            convert_func,
+            n_elem,
+            source,
+            target,
+        );
+        command_buffer.waitUntilCompleted();
+        assert_eq!(command_buffer.status(), MTLCommandBufferStatus::Completed);
+    }
+
+    /// Commit the function over 1d array, but do not wait for the result.
+    fn execute_func_over_array_no_wait(
+        command_queue: &RetainedMTLCommandQueue,
+        convert_func: &RetainedMTLComputePipelineState,
+        n_elem: usize,
+        source: &RetainedMTLBuffer,
+        target: &RetainedMTLBuffer,
+    ) -> RetainedMTLCommandBuffer {
+        let command_buffer = command_queue.commandBuffer().unwrap();
+        let compute_encoder = command_buffer.computeCommandEncoder().unwrap();
+
+        compute_encoder.setComputePipelineState(&convert_func);
+        unsafe {
+            compute_encoder.setBuffer_offset_atIndex(Some(&source), 0, 0);
+            compute_encoder.setBuffer_offset_atIndex(Some(&target), 0, 1);
+        }
+        let (grid_size, thread_group_size) =
+            Self::grid_and_thread_group_size_for_linear_op(n_elem, convert_func);
+
+        compute_encoder.dispatchThreads_threadsPerThreadgroup(grid_size, thread_group_size);
+        compute_encoder.endEncoding();
+        command_buffer.commit();
+        command_buffer
+    }
+
+    /// Return parameters needed to run function over 1d array.
+    fn grid_and_thread_group_size_for_linear_op(
+        array_elem_count: usize,
+        func: &RetainedMTLComputePipelineState,
+    ) -> (MTLSize, MTLSize) {
+        let grid_size = MTLSize {
+            width: array_elem_count,
+            height: 1,
+            depth: 1,
+        };
+
+        let max_threads_per_group = func.maxTotalThreadsPerThreadgroup();
+        let width = if max_threads_per_group > array_elem_count {
+            array_elem_count
+        } else {
+            max_threads_per_group
+        };
+        let thread_group_size = MTLSize {
+            width,
+            height: 1,
+            depth: 1,
+        };
+        (grid_size, thread_group_size)
     }
 }
 
