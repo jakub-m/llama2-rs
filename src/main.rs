@@ -577,7 +577,7 @@ impl<'a> WithMetalBuf<BufferSelector> for MatmulState<'a> {
             BufferSelector::WqF16 => Some(&ms.mtl_buffer_wq_f16),
             BufferSelector::WkF16 => Some(&ms.mtl_buffer_wk_f16),
             BufferSelector::WvF16 => Some(&ms.mtl_buffer_wv_f16),
-            BufferSelector::W1 => Some(&ms.mtl_buffer_w1),
+            BufferSelector::W1F16 => Some(&ms.mtl_buffer_w1_f16),
             BufferSelector::WoF16 => Some(&ms.mtl_buffer_wo_f16),
             BufferSelector::W2 => Some(&ms.mtl_buffer_w2),
             BufferSelector::W3 => Some(&ms.mtl_buffer_w3),
@@ -592,7 +592,7 @@ enum BufferSelector {
     WqF16,
     WkF16,
     WvF16,
-    W1,
+    W1F16,
     WoF16,
     W2,
     W3,
@@ -1054,11 +1054,11 @@ fn forward<'a>(
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
-        matmul_s(
+        matmul_s_f16(
             mms,
             &mut s.hb,
             &s.xb,
-            BufferSelector::W1,
+            BufferSelector::W1F16,
             Offset::at_elem(l, dim * hidden_dim), //[l * dim * hidden_dim..],
             dim,
             hidden_dim,
