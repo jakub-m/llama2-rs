@@ -1,1 +1,5 @@
 3.5 s/tok on llama2
+
+Tried to matmul int8 and float16, but metal complains:
+
+MPSMatrixMultiplication.mm:3250: failed assertion `Mixed input matrix multiplication is only supported when A.dataType == C.dataType == MPSDataTypeFloat32 and B.dataType == MPSDataTypeFloat16.'
