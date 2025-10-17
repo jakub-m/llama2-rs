@@ -284,6 +284,13 @@ Float16:
   MPSDataTypeInt16.'
   ```
 
+- Also, you cannot multiply int and float in a single matmul:
+  ```text
+  MPSMatrixMultiplication.mm:3250: failed assertion `Mixed input matrix
+  multiplication is only supported when A.dataType == C.dataType ==
+  MPSDataTypeFloat32 and B.dataTyp e == MPSDataTypeFloat16.'
+  ```
+
 - When doing matmul on f16, you need the output to be f32, otherwise the output
   will corrupt. Fortunately, Metal supports matmul for f16 at input and f32 at output.
 
@@ -299,6 +306,12 @@ Other:
 - Monitor if you memory does not start to swap , with `sysctl vm.swapusage` or
   Activity Monitor. If mem swaps, the computation will instantly become dog
   slow.
+
+- Apple's Instruments is useful to see GPU utilization, flamegraphs, etc. You
+  need [cargo instruments][cargo_instruments]. See [Makefile and
+  instruments-tinystories there](./Makefile) on how to use that. Mind that you
+  need debug symbols in the binary, with `debug = true` in
+  [Cargo.toml](./Cargo.toml)
 
 
 # Benchmarking Rayon
@@ -342,24 +355,37 @@ FTR, the machine I use has [available parallelism][available_parallelism] is 12
 
 # Metal
 
+I use Apple Metal to interface GPU and run matrix multiplciation on GPU. Examples:
+
 - [metal_add.rs](examples/metal_add.rs) implements a simple addition in GPU using a shared memory buffer.
 - [metal_matmul.rs](examples/metal_matmul.rs) runs matrix multiplication on GPU.
 
+Caveat: for TinyStories the benchamrks are in tok/s (higher better) and for
+llama it's s/tok (lower bertter).
+
 Running llama2 (`make run-napalm`) with matmul naively computed in GPU (shared
 memory buffers, Metal native matmul) yields ~20% GPU utilization, and ~60
-seconds per token. For CPU with Rayon, it's ~20 sec per token.
+s/tok. For CPU with Rayon, it's ~20 sec per token. So, just throwing naively
+GPU at the problem didn't help at all.
 
-# Next steps
+Initially all the models were in f32, I later cast the models to f16 (1/2 mem
+usage). Surprisingly, using f16 made TinyStories inference _slower_ (12.8 tok/s
+with f16, drop from 16 tok/s with f32).
 
-- GPU: Use private GPU memory for W matrices that don't change. Check first
-  with benchamrking if this gives better yield.
-    - https://developer.apple.com/documentation/metal/choosing-a-resource-storage-mode-for-apple-gpus
-    - https://developer.apple.com/library/archive/documentation/3DDrawing/Conceptual/MTLBestPracticesGuide/ResourceOptions.html
+I played with shared GPU memory and private GPU memory. In theory private mem
+should work faster since there there is no cache synchronization with CPU. But,
+when I moved the weights from shared mem to private mem, the inference was
+somewhat slower: I got 4.26 ms per matrix multiplication with shared buffer,
+and 4.52 ms for private buffer -
+[commit](https://github.com/jakub-m/llama2-rs/commit/1c16e28). Maybe it was
+because matrix W was in private mem and vector X was in shared mem?
 
-- Pipelining of GPU work, do not wait until finished, carry on in parallel when
-  possible.
-
-- Run comput. in GPU and CPU at once (2x yield!)
+I optimised the code to not wait for GPU result when I don't need to
+(pipelining). That is, I push commands to Metal's command buffer, those
+commands run in parallel to CPU, and I wait (blocking) for the result when I
+need it. With the pipelined execution on GPU I got 18.5 tok/s on TinyStories
+and 3.5 s/tok on llama2. Note that for TinyStories, it was way faster to run it
+with Rayon and CPUs. For llama2, it's faster to run it on GPU.
 
 
 
@@ -369,5 +395,8 @@ seconds per token. For CPU with Rayon, it's ~20 sec per token.
 - [Positional Embeddings in Transformers: A Math Guide to RoPE & ALiBi](https://towardsdatascience.com/positional-embeddings-in-transformers-a-math-guide-to-rope-alibi/)
 - [LLM Embeddings Explained: A Visual and Intuitive Guide](https://huggingface.co/spaces/hesamation/primer-llm-embedding)
 - [SwiGLU](https://medium.com/@s_boudefel/exploring-swiglu-the-activation-function-powering-modern-llms-9697f88221e7)
-- [Metal: Setting up a command structure](https://developer.apple.com/documentation/metal/setting-up-a-command-structure) 
+- Apple Metal:
+  - [Setting up a command structure](https://developer.apple.com/documentation/metal/setting-up-a-command-structure) 
+  - [Choosing a resource storage mode for Apple GPUs](https://developer.apple.com/documentation/metal/choosing-a-resource-storage-mode-for-apple-gpus)
+  - [Resource Options](https://developer.apple.com/library/archive/documentation/3DDrawing/Conceptual/MTLBestPracticesGuide/ResourceOptions.html)
 
