@@ -388,7 +388,6 @@ and 3.5 s/tok on llama2. Note that for TinyStories, it was way faster to run it
 with Rayon and CPUs. For llama2, it's faster to run it on GPU.
 
 
-
 # Materials
 
 - [From Multi-Head to Latent Attention: The Evolution of Attention Mechanisms](https://vinithavn.medium.com/from-multi-head-to-latent-attention-the-evolution-of-attention-mechanisms-64e3c0505f24)
@@ -399,4 +398,15 @@ with Rayon and CPUs. For llama2, it's faster to run it on GPU.
   - [Setting up a command structure](https://developer.apple.com/documentation/metal/setting-up-a-command-structure) 
   - [Choosing a resource storage mode for Apple GPUs](https://developer.apple.com/documentation/metal/choosing-a-resource-storage-mode-for-apple-gpus)
   - [Resource Options](https://developer.apple.com/library/archive/documentation/3DDrawing/Conceptual/MTLBestPracticesGuide/ResourceOptions.html)
+
+
+# Where to go from here
+
+Some next ideas to further improve the code
+
+- Support llama3
+- Use LLM.int8 quantization. Here [post about emergent features][llm_emergent] and this [post on HuggingFace][llm_int8_hf]
+
+[llm_emergent]: https://timdettmers.com/2022/08/17/llm-int8-and-emergent-features/
+[llm_int8_hf: https://huggingface.co/blog/hf-bitsandbytes-integration]
 
