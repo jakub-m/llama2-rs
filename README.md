@@ -229,7 +229,7 @@ Rust:
   can assume. An assertion firing was several times the only thing that hinted
   me that I confused dimensions.
 
-- If you don't keep [Mmap][https://docs.rs/memmap2/latest/memmap2/] object
+- If you don't keep [Mmap](https://docs.rs/memmap2/latest/memmap2/) object
   alive, it will be dropped and accessing the pointed data will result in a
   segfault.
 
@@ -312,6 +312,8 @@ Other:
   instruments-tinystories there](./Makefile) on how to use that. Mind that you
   need debug symbols in the binary, with `debug = true` in
   [Cargo.toml](./Cargo.toml)
+
+[cargo_instruments]: https://crates.io/crates/cargo-instruments
 
 
 # Benchmarking Rayon
@@ -408,5 +410,5 @@ Some next ideas to further improve the code
 - Use LLM.int8 quantization. Here [post about emergent features][llm_emergent] and this [post on HuggingFace][llm_int8_hf]
 
 [llm_emergent]: https://timdettmers.com/2022/08/17/llm-int8-and-emergent-features/
-[llm_int8_hf: https://huggingface.co/blog/hf-bitsandbytes-integration]
+[llm_int8_hf]: https://huggingface.co/blog/hf-bitsandbytes-integration]
 
